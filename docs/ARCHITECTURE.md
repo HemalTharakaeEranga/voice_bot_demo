@@ -33,7 +33,7 @@ One microphone button
                                    |
                          localized assistant response
                                    |
-                 OpenAI speech, then matching browser voice fallback
+                 OpenAI speech, then same-locale browser voice fallback
 ```
 
 The browser never receives the OpenAI API key. Automatic mode sends the first recording without a
@@ -42,9 +42,13 @@ unique member of the fixed ten-language allowlist. That locale is then fixed for
 short name, date, or time cannot change the conversation language. A new booking unlocks detection.
 
 If server speech is unavailable after a language has been fixed, the same microphone control can
-continue with a matching browser recognition service. Before a language is known, the user must
+continue with browser recognition fixed to that locale. Before a language is known, the user must
 select one for that fallback because browser speech recognition does not reliably identify an
 arbitrary spoken language.
+
+For reply playback, a listed same-language voice is preferred. If the browser's voice list is
+empty or incomplete, the utterance keeps the exact locale and lets the browser resolve a suitable
+default. The application never explicitly assigns a different-language voice.
 
 ## Booking flow
 

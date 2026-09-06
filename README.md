@@ -6,6 +6,7 @@ A multilingual clinic appointment demo with a responsive business interface, aut
 
 - Ten configured locales: English (`en-US`), Sinhala (`si-LK`), Tamil (`ta-LK`), Hindi (`hi-IN`), Spanish (`es-ES`), French (`fr-FR`), German (`de-DE`), Arabic (`ar-SA`), Chinese (`zh-CN`), Japanese (`ja-JP`).
 - One voice control that uses server-side OpenAI speech when configured, or browser speech after the user explicitly selects a language. The API key stays on the server.
+- Browser playback always requests the conversation's exact locale. When the browser voice list is incomplete, the browser chooses its own suitable locale voice; the application never explicitly substitutes English for a non-English reply.
 - Automatic OpenAI detection accepts only one reliable match among the same ten configured locales. Missing, unsupported, or conflicting metadata uses the selected fallback without claiming it was detected.
 - Voice practice: play a localized sample, read it aloud, and compare the recognized transcript. This is a transcript match check, not pronunciation grading, model training, or fine-tuning.
 - Guided booking with appointment date/time validation, slot conflict protection, cancellation, and receptionist-assistance paths.

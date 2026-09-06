@@ -19,8 +19,8 @@ Use fictional details only. The application does not contact a hospital or creat
 
 There is one microphone control. With a configured OpenAI key and available quota, it records a
 short clip, detects one of the ten supported languages, and transcribes it. After detection, later
-clips are pinned to that locale. Spoken replies use OpenAI first and fall back to an installed
-matching browser voice when possible.
+clips are pinned to that locale. Spoken replies use OpenAI first and then ask the browser for a
+voice in the same locale. A different-language voice is never explicitly substituted.
 
 If OpenAI quota is unavailable before detection, choose a specific language to use browser speech
 recognition. If the language was already detected, browser recognition can continue in that fixed

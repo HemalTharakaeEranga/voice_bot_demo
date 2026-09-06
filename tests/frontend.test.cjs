@@ -140,7 +140,9 @@ async function app(options = {}) {
     cancel() {},
     speak(utterance) {
       spoken.push(utterance);
-      utterance.onstart?.();
+      if (options.synthesisThrow) throw new Error("Synthesis unavailable");
+      if (options.synthesisError) utterance.onerror?.({error: options.synthesisError});
+      else utterance.onstart?.();
     },
     addEventListener() {},
   };
@@ -183,7 +185,12 @@ async function app(options = {}) {
       mediaDevices: {getUserMedia: options.getUserMedia || defaultGetUserMedia},
     },
     MediaRecorder: Recorder,
-    SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } },
+    SpeechSynthesisUtterance: class {
+      constructor(text) {
+        this.text = text;
+        this.voice = null;
+      }
+    },
     Audio: FakeAudio,
     URL: {createObjectURL: () => "blob:test", revokeObjectURL() {}},
     setInterval(callback) {
@@ -328,7 +335,7 @@ test("locked auto language is used explicitly on later recordings and cannot dri
 
 test("voice quota failure after detection keeps the locked booking on browser listening", async () => {
   const ui = await app({
-    voices: [{name: "Sinhala", lang: "si-LK"}],
+    voices: [{name: "English", lang: "en-US"}],
     transcriptions: [{
       text: "මගේ නම හේමල්",
       language_locale: "si-LK",
@@ -347,6 +354,9 @@ test("voice quota failure after detection keeps the locked booking on browser li
   assert.equal(ui.element("languageSelect").value, "auto");
   assert.equal(ui.element("listenButton").disabled, false);
   assert.match(ui.element("voiceAvailability").textContent, /browser vendor/);
+  assert.equal(ui.spoken.length, 1);
+  assert.equal(ui.spoken[0].lang, "si-LK");
+  assert.equal(ui.spoken[0].voice, null);
 
   await ui.run('startCapture("booking")');
   assert.equal(ui.recognitions.length, 1);
@@ -450,7 +460,7 @@ test("audio playback error cannot create a replay loop", async () => {
   assert.equal(ui.spoken.length, 1);
 });
 
-test("browser playback chooses exact locale and never a different language", async () => {
+test("browser playback chooses an exact voice and never assigns a different language", async () => {
   const exact = await app({
     configured: false,
     locale: "en-US",
@@ -465,8 +475,54 @@ test("browser playback chooses exact locale and never a different language", asy
     voices: [{name: "English", lang: "en-US"}],
   });
   await absent.run('speak("ආයුබෝවන්", true)');
-  assert.equal(absent.spoken.length, 0);
-  assert.match(absent.element("statusLine").textContent, /No playback voice/);
+  assert.equal(absent.spoken.length, 1);
+  assert.equal(absent.spoken[0].lang, "si-LK");
+  assert.equal(absent.spoken[0].voice, null);
+  assert.notEqual(absent.spoken[0].voice?.name, "English");
+});
+
+test("browser fallback requests all ten locale tags when its voice list is empty", async () => {
+  for (const locale of locales) {
+    const ui = await app({configured: false, locale, voices: []});
+    await ui.run('speak("Localized assistant reply", true)');
+    assert.equal(ui.spoken.length, 1, locale);
+    assert.equal(ui.spoken[0].lang, locale);
+    assert.equal(ui.spoken[0].voice, null);
+  }
+});
+
+test("Chinese playback does not explicitly substitute a different regional language", async () => {
+  const ui = await app({
+    configured: false,
+    locale: "zh-CN",
+    voices: [{name: "Cantonese", lang: "zh-HK"}],
+  });
+  await ui.run('speak("您好", true)');
+  assert.equal(ui.spoken[0].lang, "zh-CN");
+  assert.equal(ui.spoken[0].voice, null);
+});
+
+test("an actual browser language error gives actionable voice setup guidance", async () => {
+  const ui = await app({
+    configured: false,
+    locale: "si-LK",
+    voices: [],
+    synthesisError: "language-unavailable",
+  });
+  await ui.run('speak("ආයුබෝවන්", true)');
+  assert.match(ui.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
+  assert.match(ui.element("statusLine").textContent, /install and enable/i);
+});
+
+test("a synchronous browser synthesis failure is handled without losing text", async () => {
+  const ui = await app({
+    configured: false,
+    locale: "si-LK",
+    synthesisThrow: true,
+  });
+  await ui.run('speak("ආයුබෝවන්", true)');
+  assert.equal(ui.spoken.length, 1);
+  assert.match(ui.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
 });
 
 test("speaking practice remains isolated from the booking session", async () => {

@@ -8,9 +8,12 @@ endpoint. The server uses OpenAI for transcription, and the API key never enters
 or a browser response. The demo does not store uploaded audio.
 
 Without an OpenAI key, automatic detection is unavailable. After the user explicitly chooses one
-of the ten languages, the same control can use browser speech recognition and an installed browser
-speech-synthesis voice. Browser and operating-system support varies, and the browser vendor may use
-an online recognition service. Typed booking remains available in every case.
+of the ten languages, the same control can use browser speech recognition and speech synthesis.
+For playback, the application always sets the exact BCP 47 locale. It uses a compatible listed
+voice when one exists; otherwise it leaves the voice unset so the browser can choose its most
+suitable default for that locale. It never deliberately substitutes an English voice for Sinhala
+or another language. Browser and operating-system support varies, and the browser vendor may use
+an online service. Typed booking remains available in every case.
 
 The first unlocked recording sends `language_locale=auto` and a supported `fallback_locale`.
 Automatic mode deliberately omits both the singular `language` hint and the plural `languages`
@@ -153,6 +156,7 @@ not spend API quota and cannot prove real microphone or accent accuracy.
 | Recording too large / HTTP 413 | Record a shorter phrase; the demo limit is 10 MB. |
 | No reliable language result | Use `gpt-transcribe`, speak a longer clear phrase, and keep a valid fallback selected. |
 | Microphone unavailable | Use localhost or HTTPS, grant microphone permission, and check the selected input device. |
+| Browser cannot speak Sinhala or another locale | Use **Test voice** after the browser's voices finish loading. If playback still fails, restore OpenAI API quota or install/enable that language's speech voice in the operating system, then restart the browser. |
 
 ## Official OpenAI references
 

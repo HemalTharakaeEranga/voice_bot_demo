@@ -193,9 +193,14 @@ function normalizedVoiceLocale(locale) {
 function matchingVoice(locale = effectiveLocale) {
   const voices = window.speechSynthesis?.getVoices() || [];
   const normalized = normalizedVoiceLocale(locale);
+  if (!normalized) return null;
   const base = normalized.split("-")[0];
-  return voices.find((voice) => normalizedVoiceLocale(voice.lang) === normalized)
-    || voices.find((voice) => normalizedVoiceLocale(voice.lang).split("-")[0] === base);
+  const exact = voices.find((voice) => normalizedVoiceLocale(voice.lang) === normalized);
+  if (exact) return exact;
+  const generic = voices.find((voice) => normalizedVoiceLocale(voice.lang) === base);
+  if (generic || base === "zh") return generic || null;
+  return voices.find((voice) => normalizedVoiceLocale(voice.lang).split("-")[0] === base)
+    || null;
 }
 function clearAudio(expectedAudio = null) {
   if (expectedAudio && audio !== expectedAudio) return;
@@ -215,17 +220,27 @@ function stopSpeech() {
   window.speechSynthesis?.cancel();
   clearAudio();
 }
+function browserVoiceUnavailableMessage(locale, prefix = "") {
+  const help = config.openai_configured
+    ? "Check OpenAI API quota, or install and enable this language’s system speech voice."
+    : "Install and enable this language’s system speech voice, or configure OpenAI voice.";
+  return (prefix ? prefix + " " : "") + "Your browser could not provide "
+    + localeLabel(locale) + " speech. " + help;
+}
 function speakWithBrowser(text, locale, token, unavailableMessage = "") {
   const synthesis = window.speechSynthesis;
   const voice = matchingVoice(locale);
-  if (!synthesis || typeof SpeechSynthesisUtterance === "undefined" || !voice) {
-    status(unavailableMessage || "No playback voice is installed for " + localeLabel(locale)
-      + ". You can read the reply in the conversation.", "error");
+  if (!synthesis || typeof SpeechSynthesisUtterance === "undefined") {
+    status(unavailableMessage || browserVoiceUnavailableMessage(locale), "error");
     return false;
   }
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = locale;
-  utterance.voice = voice;
+  // An empty/incomplete getVoices() list does not prove that playback is
+  // unavailable. Leaving voice unset asks the browser to choose the most
+  // suitable default for the BCP 47 language tag. Never assign a different
+  // language merely because it is the first voice in the list.
+  if (voice) utterance.voice = voice;
   utterance.rate = 0.95;
   utterance.onstart = () => {
     if (token === speechVersion) status("Assistant speaking. Start listening to interrupt.", "speaking");
@@ -236,11 +251,17 @@ function speakWithBrowser(text, locale, token, unavailableMessage = "") {
     }
   };
   utterance.onerror = (event) => {
-    if (token === speechVersion && !["interrupted", "canceled"].includes(event.error)) {
-      status("Playback failed. You can continue with text.", "error");
+    const errorName = event?.error || "";
+    if (token === speechVersion && !["interrupted", "canceled"].includes(errorName)) {
+      status(unavailableMessage || browserVoiceUnavailableMessage(locale), "error");
     }
   };
-  synthesis.speak(utterance);
+  try {
+    synthesis.speak(utterance);
+  } catch {
+    status(unavailableMessage || browserVoiceUnavailableMessage(locale), "error");
+    return false;
+  }
   return true;
 }
 async function speak(text, force = false) {
@@ -274,7 +295,7 @@ async function speak(text, force = false) {
       if (token !== speechVersion || audio !== currentAudio) return;
       clearAudio(currentAudio);
       speakWithBrowser(text, locale, token,
-        "The generated audio could not be played, and no matching browser voice is installed. You can read the reply.");
+        browserVoiceUnavailableMessage(locale, "The generated audio could not be played."));
     };
     await currentAudio.play();
     if (token === speechVersion && audio === currentAudio) {
@@ -289,10 +310,10 @@ async function speak(text, force = false) {
       capabilities();
     }
     const fallbackMessage = isQuotaError(error)
-      ? "The server voice quota has been reached, and no matching browser playback voice is installed. You can read the reply."
+      ? browserVoiceUnavailableMessage(locale, "The server voice quota has been reached.")
       : error.name === "NotAllowedError"
         ? "Audio playback was blocked. Use Test voice to allow sound, or read the reply."
-        : "The generated voice is unavailable, and no matching browser playback voice is installed. You can read the reply.";
+        : browserVoiceUnavailableMessage(locale, "The generated voice is unavailable.");
     speakWithBrowser(text, locale, token, fallbackMessage);
   }
 }
@@ -326,9 +347,14 @@ function capabilities() {
       : "This browser has no speech recognition; text booking remains available.");
   }
   if (listeningLocale) {
-    notes.push(matchingVoice(listeningLocale)
-      ? "A matching browser playback voice is installed."
-      : "No matching browser playback voice is installed for this language.");
+    if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
+      notes.push("This browser has no speech playback service.");
+    } else {
+      notes.push(matchingVoice(listeningLocale)
+        ? "A listed browser voice matches this language."
+        : "The browser will try to resolve a " + localeLabel(listeningLocale)
+          + " voice when playback starts.");
+    }
   }
   $("browserNotice").textContent = notes.join(" ");
   renderLanguageContext();
