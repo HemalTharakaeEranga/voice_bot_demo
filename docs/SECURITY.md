@@ -6,7 +6,8 @@ and has not been certified for regulated or real patient data.
 ## Threat model
 
 The assets in scope are the optional server-side OpenAI key and quota, service availability,
-the integrity of demo appointment slots, and the small amount of booking data stored in SQLite.
+the integrity of bundled voice models and demo appointment slots, and the small amount of booking
+data stored in SQLite.
 The main trust boundaries are the browser-to-FastAPI requests, FastAPI-to-OpenAI requests, and
 FastAPI-to-SQLite operations.
 
@@ -37,7 +38,8 @@ source IP proves a user's identity.
   production names. This prevents Host-header confusion; it is not authentication.
 - The in-memory IP limiters have a configured request window, return Retry-After, ignore spoofable
   X-Forwarded-For, remove inactive buckets, and cap tracked clients at 4,096. Voice endpoints have
-  a separate lower limit because they can consume paid provider quota.
+  a separate lower limit because cloud requests can consume paid quota and local synthesis uses
+  significant CPU.
 - API responses use Cache-Control: no-store. Responses also receive a restrictive Content
   Security Policy, frame denial, MIME sniffing protection, a same-origin resource policy,
   referrer restrictions, and a microphone-only permissions policy.
@@ -48,6 +50,10 @@ source IP proves a user's identity.
   unknown sessions, host/origin rejection, body limits, method handling, and limiter bounds.
 - There is no permissive CORS middleware, no API secret in browser code, and no transcript
   persistence. The .env file and local database files are excluded from Git.
+- Local voice requests cannot select paths or models. Sinhala, Tamil, and Arabic use fixed files
+  whose sizes and SHA-256 hashes are pinned, synthesis input is bounded, and sanitized errors hide
+  model paths and runtime details. Per-voice locks and a two-job admission limit bound active CPU
+  work.
 - The container runs as a non-root user. CI runs Ruff, Bandit, dependency auditing, backend tests,
   and frontend tests.
 
@@ -57,10 +63,14 @@ The origin guard stops normal cross-site browser writes. It does not stop direct
 because such clients can omit browser-only headers. The trusted-host middleware and UUID session
 identifier also do not authenticate a caller.
 
-OpenAI voice endpoints remain unauthenticated in this demo. The per-process limiter reduces simple
-abuse but cannot reliably protect paid quota on a public deployment. Before exposing a configured
-OpenAI key, place the application behind real user or demo-access authentication, a shared API
-gateway rate limiter, provider budget alerts, and a hard spend limit.
+OpenAI-backed voice endpoints remain unauthenticated in this demo. The per-process limiter reduces
+simple abuse but cannot reliably protect paid quota on a public deployment. Before exposing a
+configured OpenAI key, place the application behind real user or demo-access authentication, a
+shared API gateway rate limiter, provider budget alerts, and a hard spend limit.
+
+Local synthesis is also unauthenticated and CPU intensive. Its admission limit prevents an
+unbounded in-process synthesis queue, but public deployments still need authenticated access and a
+shared gateway limit. Each application worker loads its own copy of each local model it uses.
 
 The limiter and conversation store are local to one process. They reset on restart and are not
 shared across workers. A reverse proxy may also make all requests appear to come from one address.

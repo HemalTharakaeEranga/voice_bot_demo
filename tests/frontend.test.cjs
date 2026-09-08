@@ -16,6 +16,11 @@ const labels = {
   "de-DE": "Deutsch · German", "ar-SA": "العربية · Arabic", "zh-CN": "中文 · Chinese",
   "ja-JP": "日本語 · Japanese",
 };
+const localizedGreetings = {
+  "si-LK": "ආයුබෝවන්. මට උපකාර කළ හැක්කේ වෛද්‍ය හමුවක් වෙන්කර ගැනීමට පමණි. රෝගියාගේ නම කුමක්ද?",
+  "ta-LK": "வணக்கம். நான் மருத்துவ நேரம் பதிவு செய்வதற்கு மட்டுமே உதவ முடியும். நோயாளியின் பெயர் என்ன?",
+  "ar-SA": "مرحبًا. يمكنني فقط مساعدتك في حجز موعد طبي. ما اسم المريض؟",
+};
 
 class Element {
   constructor(tagName = "div") {
@@ -111,6 +116,8 @@ async function app(options = {}) {
   const audios = [];
   const tracks = [];
   const timers = new Map();
+  const synthesisListeners = new Map();
+  const playErrors = [...(options.playErrors || [])];
   class Recognition {
     constructor() { recognitions.push(this); }
     start() { this.onstart?.(); }
@@ -144,15 +151,24 @@ async function app(options = {}) {
       if (options.synthesisError) utterance.onerror?.({error: options.synthesisError});
       else utterance.onstart?.();
     },
-    addEventListener() {},
+    addEventListener(name, callback) {
+      if (!synthesisListeners.has(name)) synthesisListeners.set(name, []);
+      synthesisListeners.get(name).push(callback);
+    },
+    async emit(name) {
+      for (const callback of synthesisListeners.get(name) || []) await callback();
+    },
   };
   class FakeAudio {
     constructor(url) {
       this.url = url;
+      this.playCalls = 0;
       audios.push(this);
     }
     async play() {
-      if (options.playError) throw Object.assign(new Error("Playback rejected"), {name: options.playError});
+      this.playCalls += 1;
+      const playError = playErrors.length ? playErrors.shift() : options.playError;
+      if (playError) throw Object.assign(new Error("Playback rejected"), {name: playError});
     }
     pause() { this.paused = true; }
     load() {}
@@ -208,6 +224,7 @@ async function app(options = {}) {
           openai_configured: options.configured !== false,
           clinic_today: options.clinicToday || "2026-09-08",
           clinic_utc_offset_minutes: 330,
+          local_voice_locales: options.localVoices || [],
           languages: locales.map((locale) => ({
             locale,
             label: labels[locale],
@@ -244,7 +261,7 @@ async function app(options = {}) {
   vm.runInContext(source, context, {filename: "app/static/app.js"});
   await settle();
   return {
-    element, calls, recognitions, recorders, spoken, audios, timers, tracks, document,
+    element, calls, recognitions, recorders, spoken, audios, timers, tracks, document, synthesis,
     run: (code) => vm.runInContext(code, context),
     text: () => element("conversation").children.map((item) => item.children.at(-1).textContent),
     messageLocales: () => element("conversation").children.map((item) => item.children.at(-1).lang),
@@ -271,6 +288,36 @@ test("initialization creates only a text session and makes no paid voice or chec
   assert.equal(ui.audios.length, 0);
   assert.equal(ui.spoken.length, 0);
   assert.deepEqual(ui.text(), ["Greeting en-US 1"]);
+});
+
+test("selecting a bundled local voice displays and plays the exact localized greeting", async () => {
+  for (const locale of ["si-LK", "ta-LK", "ar-SA"]) {
+    const ui = await app({
+      configured: false,
+      localVoices: ["si-LK", "ta-LK", "ar-SA"],
+      fetch: (url, requestOptions) => {
+      if (url !== "/api/sessions") return undefined;
+      const requestedLocale = JSON.parse(requestOptions.body).language_locale;
+      return response({
+        session_id: `session-${requestedLocale}`,
+        assistant_text: localizedGreetings[requestedLocale] || "English greeting",
+        step: "patient_name",
+      });
+      },
+    });
+    ui.element("languageSelect").value = locale;
+    await ui.element("languageSelect").emit("change");
+    await settle(8);
+
+    assert.equal(ui.text().at(-1), localizedGreetings[locale]);
+    assert.equal(ui.messageLocales().at(-1), locale);
+    const speech = ui.calls.filter((call) => call.url === "/api/voice/speak").at(-1);
+    assert.deepEqual(JSON.parse(speech.options.body), {
+      text: localizedGreetings[locale],
+      language_locale: locale,
+    });
+    assert.equal(ui.audios.at(-1).playCalls, 1);
+  }
 });
 
 test("date picker uses the server-provided clinic date", async () => {
@@ -391,9 +438,8 @@ test("voice quota failure keeps OpenAI listening and the detected booking langua
   assert.equal(ui.element("languageSelect").value, "auto");
   assert.equal(ui.element("listenButton").disabled, false);
   assert.match(ui.element("voiceAvailability").textContent, /OpenAI processes recordings/);
-  assert.equal(ui.spoken.length, 1);
-  assert.equal(ui.spoken[0].lang, "si-LK");
-  assert.equal(ui.spoken[0].voice, null);
+  assert.equal(ui.spoken.length, 0);
+  assert.match(ui.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
 
   await ui.run('startCapture("booking")');
   assert.equal(ui.recorders.length, 2);
@@ -531,6 +577,159 @@ test("generated speech failure falls back once to a matching browser voice", asy
   assert.equal(ui.run("transcriptionProviderUnavailable"), false);
 });
 
+test("an OpenAI voice quota flag does not block a bundled local voice", async () => {
+  let speechCalls = 0;
+  const ui = await app({
+    locale: "en-US",
+    localVoices: ["si-LK", "ta-LK", "ar-SA"],
+    voices: [{name: "English", lang: "en-US"}],
+    fetch: (url) => {
+      if (url === "/api/voice/speak" && speechCalls++ === 0) {
+        return response({detail: "Voice quota reached"}, 429);
+      }
+      return undefined;
+    },
+  });
+
+  await ui.run('speak("Hello", true, "en-US")');
+  assert.equal(ui.run("speechProviderUnavailable"), true);
+  await ui.run(`speak(${JSON.stringify(localizedGreetings["si-LK"])}, true, "si-LK")`);
+  await settle();
+
+  const calls = ui.calls.filter((call) => call.url === "/api/voice/speak");
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[1].options.body).language_locale, "si-LK");
+  assert.equal(ui.audios.length, 1);
+  assert.equal(ui.audios[0].playCalls, 1);
+});
+
+test("a busy local voice does not disable OpenAI speech", async () => {
+  let speechCalls = 0;
+  const ui = await app({
+    locale: "si-LK",
+    localVoices: ["si-LK", "ta-LK", "ar-SA"],
+    voices: [{name: "Sinhala", lang: "si-LK"}],
+    fetch: (url) => {
+      if (url === "/api/voice/speak" && speechCalls++ === 0) {
+        return response({detail: "Local speech is busy. Please try again shortly."}, 429);
+      }
+      return undefined;
+    },
+  });
+
+  await ui.run(`speak(${JSON.stringify(localizedGreetings["si-LK"])}, true, "si-LK")`);
+  assert.equal(ui.run("speechProviderUnavailable"), false);
+  await ui.run('speak("Hello", true, "en-US")');
+  await settle();
+
+  const calls = ui.calls.filter((call) => call.url === "/api/voice/speak");
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[1].options.body).language_locale, "en-US");
+  assert.equal(ui.audios.length, 1);
+});
+
+test("local-language replies keep their exact text and locale in browser fallback", async () => {
+  const cases = [
+    {locale: "si-LK", voice: {name: "Sinhala", lang: "si-LK"}},
+    {locale: "ta-LK", voice: {name: "Tamil India", lang: "ta-IN"}},
+    {locale: "ar-SA", voice: {name: "Arabic Jordan", lang: "ar-JO"}},
+  ];
+  for (const {locale, voice} of cases) {
+    const reply = localizedGreetings[locale];
+    const ui = await app({
+      configured: false,
+      locale,
+      voices: [voice],
+      fetch: (url) => url === "/api/messages"
+        ? response({assistant_text: reply, step: "specialty", status: "active"})
+        : undefined,
+    });
+    await ui.run('sendMessage("Demo Patient")');
+    await settle();
+
+    assert.equal(ui.text().at(-1), reply);
+    assert.equal(ui.messageLocales().at(-1), locale);
+    assert.equal(ui.spoken.length, 1);
+    assert.equal(ui.spoken[0].text, reply);
+    assert.equal(ui.spoken[0].lang, locale);
+    assert.equal(ui.spoken[0].voice.name, voice.name);
+  }
+});
+
+test("reply replay retries OpenAI after voice quota is restored", async () => {
+  let speechCalls = 0;
+  const reply = "Bonjour. Quel service souhaitez-vous ?";
+  const ui = await app({
+    locale: "fr-FR",
+    voices: [{name: "English", lang: "en-US"}],
+    fetch: (url) => {
+      if (url === "/api/messages") {
+        return response({assistant_text: reply, step: "specialty", status: "active"});
+      }
+      if (url === "/api/voice/speak" && speechCalls++ === 0) {
+        return response({detail: "Voice quota reached"}, 429);
+      }
+      return undefined;
+    },
+  });
+  await ui.run('sendMessage("Demo Patient")');
+  await settle();
+  assert.equal(ui.run("speechProviderUnavailable"), true);
+  assert.equal(ui.spoken.length, 0);
+
+  const replayButton = ui.element("conversation").children.at(-1).children[0].children.at(-1);
+  await replayButton.emit("click");
+  await settle();
+  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/speak").length, 2);
+  assert.equal(ui.audios.length, 1);
+  assert.equal(ui.audios[0].playCalls, 1);
+  assert.equal(JSON.parse(ui.calls.filter((call) => call.url === "/api/voice/speak").at(-1).options.body).text, reply);
+});
+
+test("an autoplay block preserves generated audio for a direct reply-button replay", async () => {
+  const ui = await app({
+    locale: "si-LK",
+    localVoices: ["si-LK", "ta-LK", "ar-SA"],
+    playErrors: ["NotAllowedError", null],
+  });
+  const reply = localizedGreetings["si-LK"];
+  ui.run(`appendMessage("assistant", ${JSON.stringify(reply)})`);
+  const replayButton = ui.element("conversation").children.at(-1).children[0].children.at(-1);
+  await ui.run(`speak(${JSON.stringify(reply)}, true, "si-LK", document.getElementById("conversation").children.at(-1).children[0].children.at(-1))`);
+  await settle();
+
+  assert.equal(ui.audios.length, 1);
+  assert.equal(ui.audios[0].playCalls, 1);
+  assert.equal(ui.run("Boolean(pendingPlayback)"), true);
+  assert.equal(replayButton.textContent, "Play audio");
+  const speechCalls = ui.calls.filter((call) => call.url === "/api/voice/speak").length;
+
+  await replayButton.emit("click");
+  await settle();
+  assert.equal(ui.audios[0].playCalls, 2);
+  assert.equal(ui.run("pendingPlayback"), null);
+  assert.equal(replayButton.textContent, "Listen");
+  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/speak").length, speechCalls);
+});
+
+test("Test voice reuses prepared audio after an autoplay block", async () => {
+  const ui = await app({
+    locale: "ta-LK",
+    localVoices: ["si-LK", "ta-LK", "ar-SA"],
+    playErrors: ["NotAllowedError", null],
+  });
+  await ui.element("testVoiceButton").emit("click");
+  await settle();
+  assert.equal(ui.run("Boolean(pendingPlayback)"), true);
+  assert.equal(ui.audios[0].playCalls, 1);
+
+  await ui.element("testVoiceButton").emit("click");
+  await settle();
+  assert.equal(ui.audios[0].playCalls, 2);
+  assert.equal(ui.run("pendingPlayback"), null);
+  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/speak").length, 1);
+});
+
 test("generated speech requests the selected locale for all ten languages", async () => {
   for (const locale of locales) {
     const ui = await app({locale});
@@ -584,10 +783,8 @@ test("browser playback chooses an exact voice and never assigns a different lang
     voices: [{name: "English", lang: "en-US"}],
   });
   await absent.run('speak("ආයුබෝවන්", true)');
-  assert.equal(absent.spoken.length, 1);
-  assert.equal(absent.spoken[0].lang, "si-LK");
-  assert.equal(absent.spoken[0].voice, null);
-  assert.notEqual(absent.spoken[0].voice?.name, "English");
+  assert.equal(absent.spoken.length, 0);
+  assert.match(absent.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
 });
 
 test("browser fallback requests all ten locale tags when its voice list is empty", async () => {
@@ -610,8 +807,8 @@ test("Chinese playback does not substitute Cantonese or traditional regional voi
     ],
   });
   await ui.run('speak("您好", true)');
-  assert.equal(ui.spoken[0].lang, "zh-CN");
-  assert.equal(ui.spoken[0].voice, null);
+  assert.equal(ui.spoken.length, 0);
+  assert.match(ui.element("statusLine").textContent, /could not provide .*Chinese speech/i);
 });
 
 test("Chinese playback accepts a compatible simplified Mandarin voice", async () => {

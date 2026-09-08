@@ -35,6 +35,17 @@ def voice_client(monkeypatch):
     app.dependency_overrides[get_settings] = lambda: settings
     requests = []
     replies = []
+    local_speech_requests = []
+
+    def generate_local_speech(text, locale):
+        local_speech_requests.append((text, locale))
+        return b"RIFF\x00\x00\x00\x00WAVEtest-local-audio"
+
+    monkeypatch.setattr(voice, "generate_local_speech", generate_local_speech)
+    monkeypatch.setattr(
+        voice, "available_local_voice_locales", lambda: ("si-LK", "ta-LK", "ar-SA")
+    )
+    app.state.local_speech_requests = local_speech_requests
 
     def handle(request):
         requests.append(request)
@@ -65,6 +76,7 @@ def test_public_config_exposes_ten_languages_but_no_key(voice_client):
     assert payload["openai_configured"] is True
     assert date.fromisoformat(payload["clinic_today"]).isoformat() == payload["clinic_today"]
     assert payload["clinic_utc_offset_minutes"] == settings.clinic_utc_offset_minutes
+    assert payload["local_voice_locales"] == ["si-LK", "ta-LK", "ar-SA"]
     assert payload["models"]["transcription"] == "gpt-transcribe"
     assert set(voice.LANGUAGE_CODE_TO_LOCALE.values()) == set(LANGUAGES)
     assert {language["locale"] for language in payload["languages"]} == set(LANGUAGES)
@@ -88,6 +100,80 @@ def test_missing_key_leaves_browser_metadata_available(voice_client):
     assert client.get("/api/config").json()["openai_configured"] is False
     assert client.post("/api/voice/check").status_code == 503
     assert client.post("/api/voice/speak", json={"text": "Hello"}).status_code == 503
+    assert not requests
+
+
+@pytest.mark.parametrize("locale", ["si-LK", "ta-LK", "ar-SA"])
+def test_local_speech_does_not_require_openai_key(voice_client, locale):
+    client, settings, requests, _ = voice_client
+    settings.openai_api_key = type(settings.openai_api_key)("")
+    text = LANGUAGES[locale].prompts["ask_name"]
+    response = client.post(
+        "/api/voice/speak",
+        json={"text": text, "language_locale": locale},
+    )
+    assert response.status_code == 200
+    assert response.content == b"RIFF\x00\x00\x00\x00WAVEtest-local-audio"
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.headers["cache-control"] == "no-store"
+    assert client.app.state.local_speech_requests == [(text, locale)]
+    assert not requests
+
+
+@pytest.mark.parametrize(
+    "error, expected_status, expected_detail",
+    [
+        (ValueError("private input"), 422, "Local speech text is invalid."),
+        (
+            voice.LocalVoiceUnavailableError("private model path"),
+            503,
+            "The local Sinhala voice is unavailable. Check the server voice files.",
+        ),
+        (
+            voice.LocalVoiceGenerationError("private runtime failure"),
+            503,
+            "Local speech generation failed. Please try again.",
+        ),
+    ],
+)
+def test_local_speech_failures_are_safe(
+    voice_client, monkeypatch, error, expected_status, expected_detail
+):
+    client, _, requests, _ = voice_client
+
+    def fail_local_speech(_text, _locale):
+        raise error
+
+    monkeypatch.setattr(voice, "generate_local_speech", fail_local_speech)
+    response = client.post(
+        "/api/voice/speak",
+        json={"text": "ආයුබෝවන්", "language_locale": "si-LK"},
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": expected_detail}
+    assert "private" not in response.text
+    assert not requests
+
+
+def test_local_speech_rejects_excess_concurrent_work(voice_client):
+    client, _, requests, _ = voice_client
+    acquired = 0
+    try:
+        for _ in range(voice.MAX_CONCURRENT_LOCAL_SPEECH):
+            assert voice._LOCAL_SPEECH_ADMISSION.acquire(blocking=False)
+            acquired += 1
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "வணக்கம்", "language_locale": "ta-LK"},
+        )
+    finally:
+        for _ in range(acquired):
+            voice._LOCAL_SPEECH_ADMISSION.release()
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Local speech is busy. Please try again shortly."}
+    assert response.headers["retry-after"] == "1"
     assert not requests
 
 
@@ -399,8 +485,18 @@ def test_missing_or_empty_provider_transcript_is_handled(voice_client, payload):
 @pytest.mark.parametrize("locale", LANGUAGES)
 def test_speech_returns_uncached_audio_for_all_configured_locales(voice_client, locale):
     client, _, requests, replies = voice_client
-    replies.append(httpx.Response(200, content=b"ID3demo", headers={"content-type": "audio/mpeg"}))
     text = LANGUAGES[locale].prompts["ask_name"]
+    if locale in voice.LOCAL_VOICE_LOCALES:
+        response = client.post("/api/voice/speak", json={"text": text, "language_locale": locale})
+        assert response.status_code == 200
+        assert response.content.startswith(b"RIFF")
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.headers["cache-control"] == "no-store"
+        assert client.app.state.local_speech_requests == [(text, locale)]
+        assert not requests
+        return
+
+    replies.append(httpx.Response(200, content=b"ID3demo", headers={"content-type": "audio/mpeg"}))
     response = client.post("/api/voice/speak", json={"text": text, "language_locale": locale})
     assert response.status_code == 200
     assert response.content == b"ID3demo"
@@ -409,6 +505,8 @@ def test_speech_returns_uncached_audio_for_all_configured_locales(voice_client, 
     payload = json.loads(requests[0].content)
     assert payload["input"] == text
     assert locale in payload["instructions"]
+    assert voice.SPEECH_LANGUAGE_NAMES[locale] in payload["instructions"]
+    assert "Do not translate, transliterate, or add words" in payload["instructions"]
     assert payload["response_format"] == "mp3"
 
 

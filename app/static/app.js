@@ -12,6 +12,7 @@ let config = {
   openai_configured: false,
   clinic_today: "",
   clinic_utc_offset_minutes: 0,
+  local_voice_locales: [],
   languages: [],
 };
 let sessionId = null;
@@ -33,6 +34,8 @@ let speechVersion = 0;
 let speechRequest = null;
 let audio = null;
 let audioUrl = null;
+let pendingPlayback = null;
+let browserVoicesKnown = false;
 
 function languageFor(locale) {
   return config.languages.find((item) => item.locale === locale) || null;
@@ -49,6 +52,10 @@ function defaultLocale() {
 }
 function localeLabel(locale) {
   return languageFor(locale)?.label || locale;
+}
+function localVoiceAvailable(locale) {
+  return Array.isArray(config.local_voice_locales)
+    && config.local_voice_locales.includes(locale);
 }
 function isAutomatic() {
   return languageSelect.value === AUTO_LOCALE;
@@ -129,6 +136,9 @@ function controls() {
   document.querySelectorAll("#quickReplies button, #quickReplies input").forEach((item) => {
     item.disabled = textInput.disabled;
   });
+  document.querySelectorAll(".message-speak-button").forEach((item) => {
+    item.disabled = busy || Boolean(capture);
+  });
 }
 function setBusy(value) {
   busy = value;
@@ -138,15 +148,32 @@ function setBusy(value) {
 function appendMessage(role, text) {
   const item = document.createElement("div");
   item.className = "message " + role;
+  const header = document.createElement("div");
+  header.className = "message-header";
   const label = document.createElement("strong");
   label.textContent = role === "assistant" ? "Careline assistant" : "You";
+  header.append(label);
   const paragraph = document.createElement("p");
   paragraph.textContent = text;
   paragraph.lang = effectiveLocale;
   paragraph.dir = "auto";
-  item.append(label, paragraph);
+  let replayButton = null;
+  if (role === "assistant") {
+    const replyLocale = effectiveLocale;
+    replayButton = document.createElement("button");
+    replayButton.type = "button";
+    replayButton.className = "message-speak-button";
+    replayButton.textContent = "Listen";
+    replayButton.setAttribute("aria-label", "Play this assistant reply");
+    replayButton.addEventListener("click", () => {
+      if (!busy && !capture) void replayReply(text, replyLocale, replayButton);
+    });
+    header.append(replayButton);
+  }
+  item.append(header, paragraph);
   $("conversation").append(item);
   $("conversation").scrollTop = $("conversation").scrollHeight;
+  return replayButton;
 }
 
 async function request(path, options = {}) {
@@ -220,8 +247,9 @@ function compatibleVoiceLocale(requestedLocale, voiceLocale) {
   // the `zh` primary tag. Generic zh and zh-Hans variants remain compatible.
   return !candidateParts.some((part) => ["hant", "hk", "mo", "tw", "yue"].includes(part));
 }
-function matchingVoice(locale = effectiveLocale) {
-  const voices = window.speechSynthesis?.getVoices() || [];
+function matchingVoice(locale = effectiveLocale, availableVoices = null) {
+  const voices = availableVoices || window.speechSynthesis?.getVoices() || [];
+  if (voices.length) browserVoicesKnown = true;
   const normalized = normalizedVoiceLocale(locale);
   if (!normalized) return null;
   const base = normalized.split("-")[0];
@@ -231,8 +259,12 @@ function matchingVoice(locale = effectiveLocale) {
   if (generic) return generic;
   return voices.find((voice) => compatibleVoiceLocale(normalized, voice.lang)) || null;
 }
+function isMessageSpeakButton(button) {
+  return String(button?.className || "").split(/\s+/).includes("message-speak-button");
+}
 function clearAudio(expectedAudio = null) {
   if (expectedAudio && audio !== expectedAudio) return;
+  const currentAudio = audio;
   if (audio) {
     audio.pause();
     audio.removeAttribute("src");
@@ -241,6 +273,13 @@ function clearAudio(expectedAudio = null) {
   }
   if (audioUrl) URL.revokeObjectURL(audioUrl);
   audioUrl = null;
+  if (pendingPlayback?.audio === currentAudio) {
+    if (isMessageSpeakButton(pendingPlayback.actionButton)) {
+      pendingPlayback.actionButton.textContent = "Listen";
+      pendingPlayback.actionButton.classList.remove("audio-ready");
+    }
+    pendingPlayback = null;
+  }
 }
 function stopSpeech() {
   speechVersion += 1;
@@ -250,7 +289,9 @@ function stopSpeech() {
   clearAudio();
 }
 function browserVoiceUnavailableMessage(locale, prefix = "") {
-  const help = config.openai_configured
+  const help = localVoiceAvailable(locale)
+    ? "Check the bundled local voice files, or install and enable this language’s system speech voice."
+    : config.openai_configured
     ? "Check OpenAI API quota, or install and enable this language’s system speech voice."
     : "Install and enable this language’s system speech voice, or configure OpenAI voice.";
   return (prefix ? prefix + " " : "") + "Your browser could not provide "
@@ -258,17 +299,22 @@ function browserVoiceUnavailableMessage(locale, prefix = "") {
 }
 function speakWithBrowser(text, locale, token, unavailableMessage = "") {
   const synthesis = window.speechSynthesis;
-  const voice = matchingVoice(locale);
   if (!synthesis || typeof SpeechSynthesisUtterance === "undefined") {
+    status(unavailableMessage || browserVoiceUnavailableMessage(locale), "error");
+    return false;
+  }
+  const voices = synthesis.getVoices() || [];
+  if (voices.length) browserVoicesKnown = true;
+  const voice = matchingVoice(locale, voices);
+  if (browserVoicesKnown && !voice) {
     status(unavailableMessage || browserVoiceUnavailableMessage(locale), "error");
     return false;
   }
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = locale;
-  // An empty/incomplete getVoices() list does not prove that playback is
-  // unavailable. Leaving voice unset asks the browser to choose the most
-  // suitable default for the BCP 47 language tag. Never assign a different
-  // language merely because it is the first voice in the list.
+  // An empty getVoices() list can mean that voices are still loading. Until
+  // the browser reports its list, leaving voice unset lets it resolve the
+  // exact BCP 47 tag. Once the list is known, a compatible voice is required.
   if (voice) utterance.voice = voice;
   utterance.rate = 0.95;
   utterance.onstart = () => {
@@ -293,18 +339,61 @@ function speakWithBrowser(text, locale, token, unavailableMessage = "") {
   }
   return true;
 }
-async function speak(text, force = false) {
+async function playPreparedAudio() {
+  const prepared = pendingPlayback;
+  if (!prepared || audio !== prepared.audio) return false;
+  try {
+    await prepared.audio.play();
+    if (pendingPlayback === prepared) {
+      pendingPlayback = null;
+      if (isMessageSpeakButton(prepared.actionButton)) {
+        prepared.actionButton.textContent = "Listen";
+        prepared.actionButton.classList.remove("audio-ready");
+      }
+      status("Assistant speaking. Start listening to interrupt.", "speaking");
+    }
+    return true;
+  } catch (error) {
+    if (pendingPlayback !== prepared) return false;
+    if (error.name === "NotAllowedError") {
+      status("Audio is ready. Select Play audio again to allow sound.", "error");
+      return false;
+    }
+    clearAudio(prepared.audio);
+    return speakWithBrowser(
+      prepared.text,
+      prepared.locale,
+      prepared.token,
+      browserVoiceUnavailableMessage(
+        prepared.locale,
+        "The generated audio could not be played.",
+      ),
+    );
+  }
+}
+async function replayReply(text, locale, actionButton) {
+  if (pendingPlayback?.text === text && pendingPlayback.locale === locale) {
+    await playPreparedAudio();
+    return;
+  }
+  // A deliberate replay is also an explicit retry after quota or permission
+  // settings have been corrected; no page reload should be required.
+  speechProviderUnavailable = false;
+  capabilities();
+  await speak(text, true, locale, actionButton);
+}
+async function speak(text, force = false, locale = effectiveLocale, actionButton = null) {
   if (!force && !$("autoSpeak").checked) return;
   stopSpeech();
   const token = speechVersion;
-  const locale = effectiveLocale;
-  if (!config.openai_configured || speechProviderUnavailable) {
+  const useLocalVoice = localVoiceAvailable(locale);
+  if (!useLocalVoice && (!config.openai_configured || speechProviderUnavailable)) {
     speakWithBrowser(text, locale, token);
     return;
   }
   try {
     speechRequest = new AbortController();
-    status("Preparing the AI-generated voice…", "processing");
+    status(useLocalVoice ? "Preparing the offline voice…" : "Preparing the AI-generated voice…", "processing");
     const response = await request("/api/voice/speak", json({
       text,
       language_locale: locale,
@@ -333,16 +422,30 @@ async function speak(text, force = false) {
   } catch (error) {
     if (token !== speechVersion || error.name === "AbortError") return;
     speechRequest = null;
+    if (error.name === "NotAllowedError" && audio) {
+      pendingPlayback = {audio, text, locale, token, actionButton};
+      if (isMessageSpeakButton(actionButton)) {
+        actionButton.textContent = "Play audio";
+        actionButton.classList.add("audio-ready");
+      }
+      status(
+        actionButton
+          ? "Audio is ready. Select Play audio on this reply to allow sound."
+          : "Audio is ready. Select Test voice again to allow sound.",
+        "error",
+      );
+      return;
+    }
     clearAudio();
-    if (isPersistentProviderError(error)) {
+    if (!useLocalVoice && isPersistentProviderError(error)) {
       speechProviderUnavailable = true;
       capabilities();
     }
-    const fallbackMessage = isQuotaError(error)
+    const fallbackMessage = useLocalVoice
+      ? browserVoiceUnavailableMessage(locale, error.message)
+      : isQuotaError(error)
       ? browserVoiceUnavailableMessage(locale, "The server voice quota has been reached.")
-      : error.name === "NotAllowedError"
-        ? "Audio playback was blocked. Use Test voice to allow sound, or read the reply."
-        : browserVoiceUnavailableMessage(locale, "The generated voice is unavailable.");
+      : browserVoiceUnavailableMessage(locale, "The generated voice is unavailable.");
     speakWithBrowser(text, locale, token, fallbackMessage);
   }
 }
@@ -376,8 +479,14 @@ function capabilities() {
       : "This browser has no speech recognition; text booking remains available.");
   }
   if (listeningLocale) {
-    if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
+    if (localVoiceAvailable(listeningLocale)) {
+      notes.push("Replies use the bundled offline " + localeLabel(listeningLocale) + " voice.");
+    } else if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
       notes.push("This browser has no speech playback service.");
+    } else if ((!config.openai_configured || speechProviderUnavailable)
+      && browserVoicesKnown && !matchingVoice(listeningLocale)) {
+      notes.push("No compatible " + localeLabel(listeningLocale)
+        + " playback voice is installed in this browser or operating system.");
     } else {
       notes.push(matchingVoice(listeningLocale)
         ? "A listed browser voice matches this language."
@@ -519,12 +628,12 @@ async function startSession(shouldSpeak = true, preserveLanguage = false) {
     }, pending.signal))).json();
     if (token !== version) return false;
     sessionId = data.session_id;
-    appendMessage("assistant", data.assistant_text);
+    const replayButton = appendMessage("assistant", data.assistant_text);
     progress(data.step);
     status(isAutomatic()
       ? "Ready. Speak a complete phrase with the patient’s name, or type a demo name."
       : "Ready. Speak or type a demo patient name.");
-    if (shouldSpeak) void speak(data.assistant_text);
+    if (shouldSpeak) void speak(data.assistant_text, false, effectiveLocale, replayButton);
     return true;
   } catch (error) {
     if (token === version && error.name !== "AbortError") status(error.message, "error");
@@ -558,14 +667,14 @@ async function sendMessage(text) {
     }, pending.signal))).json();
     if (token !== version) return;
     textInput.value = "";
-    appendMessage("assistant", data.assistant_text);
+    const replayButton = appendMessage("assistant", data.assistant_text);
     ended = data.status !== "active";
     progress(data.step, data.status);
     if (data.booking) showBooking(data.booking);
     status(ended
       ? "Conversation complete. Select New booking to start again."
       : "Ready for your reply.");
-    void speak(data.assistant_text);
+    void speak(data.assistant_text, false, effectiveLocale, replayButton);
   } catch (error) {
     if (token !== version || error.name === "AbortError") return;
     if (error.status === 404) {
@@ -810,7 +919,15 @@ languageSelect.addEventListener("change", () => startSession());
 $("listenButton").addEventListener("click", () => startCapture("booking"));
 $("practiceButton").addEventListener("click", () => startCapture("practice"));
 $("testVoiceButton").addEventListener("click", () => {
-  if (language()) void speak(language().sample, true);
+  if (pendingPlayback?.actionButton === $("testVoiceButton")) {
+    void playPreparedAudio();
+    return;
+  }
+  if (language()) {
+    speechProviderUnavailable = false;
+    capabilities();
+    void speak(language().sample, true, effectiveLocale, $("testVoiceButton"));
+  }
 });
 $("autoSpeak").addEventListener("change", () => {
   if (!$("autoSpeak").checked) {
@@ -829,7 +946,10 @@ $("textForm").addEventListener("submit", (event) => {
   event.preventDefault();
   void sendMessage(textInput.value);
 });
-window.speechSynthesis?.addEventListener?.("voiceschanged", capabilities);
+window.speechSynthesis?.addEventListener?.("voiceschanged", () => {
+  browserVoicesKnown = true;
+  capabilities();
+});
 window.addEventListener("pagehide", () => {
   stopCapture();
   stopSpeech();

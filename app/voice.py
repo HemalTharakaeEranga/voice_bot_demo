@@ -2,20 +2,31 @@
 
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
+from threading import BoundedSemaphore
 from typing import Annotated, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import Settings, get_settings
 from app.dialogue.translations import LANGUAGES
+from app.local_tts import (
+    LOCAL_VOICE_LOCALES,
+    LocalVoiceGenerationError,
+    LocalVoiceUnavailableError,
+    available_local_voice_locales,
+    generate_local_speech,
+)
 
 router = APIRouter(prefix="/api", tags=["voice"])
 SettingsDependency = Annotated[Settings, Depends(get_settings)]
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_TRANSCRIPT_CHARACTERS = 4096
 OPENAI_BASE_URL = "https://api.openai.com/v1"
+MAX_CONCURRENT_LOCAL_SPEECH = 2
+_LOCAL_SPEECH_ADMISSION = BoundedSemaphore(MAX_CONCURRENT_LOCAL_SPEECH)
 AUDIO_FORMATS = {
     "audio/webm": "webm",
     "video/webm": "webm",
@@ -53,6 +64,18 @@ LANGUAGE_CODE_TO_LOCALE = {
     "ar": "ar-SA",
     "zh": "zh-CN",
     "ja": "ja-JP",
+}
+SPEECH_LANGUAGE_NAMES = {
+    "en-US": "English",
+    "si-LK": "Sinhala",
+    "ta-LK": "Tamil",
+    "hi-IN": "Hindi",
+    "es-ES": "Spanish",
+    "fr-FR": "French",
+    "de-DE": "German",
+    "ar-SA": "Arabic",
+    "zh-CN": "Simplified Chinese Mandarin",
+    "ja-JP": "Japanese",
 }
 LANGUAGE_ALIASES = {
     "eng": "en",
@@ -108,6 +131,7 @@ class VoiceConfig(BaseModel):
     openai_configured: bool
     clinic_today: date
     clinic_utc_offset_minutes: int
+    local_voice_locales: list[str]
     languages: list[VoiceLanguage]
     models: VoiceModels
 
@@ -308,6 +332,7 @@ def voice_config(response: Response, settings: SettingsDependency) -> VoiceConfi
         openai_configured=settings.openai_configured,
         clinic_today=datetime.now(clinic_timezone).date(),
         clinic_utc_offset_minutes=settings.clinic_utc_offset_minutes,
+        local_voice_locales=list(available_local_voice_locales()),
         languages=[
             VoiceLanguage(
                 locale=language.locale,
@@ -435,6 +460,40 @@ async def transcribe(
 
 @router.post("/voice/speak")
 async def speak(request: SpeechRequest, settings: SettingsDependency) -> Response:
+    if request.language_locale in LOCAL_VOICE_LOCALES:
+        if not _LOCAL_SPEECH_ADMISSION.acquire(blocking=False):
+            raise HTTPException(
+                429,
+                "Local speech is busy. Please try again shortly.",
+                headers={"Retry-After": "1"},
+            )
+        try:
+            try:
+                audio = await run_in_threadpool(
+                    generate_local_speech,
+                    request.text,
+                    request.language_locale,
+                )
+            except ValueError as exc:
+                raise HTTPException(422, "Local speech text is invalid.") from exc
+            except LocalVoiceUnavailableError as exc:
+                language = SPEECH_LANGUAGE_NAMES[request.language_locale]
+                raise HTTPException(
+                    503,
+                    f"The local {language} voice is unavailable. Check the server voice files.",
+                ) from exc
+            except LocalVoiceGenerationError as exc:
+                raise HTTPException(
+                    503, "Local speech generation failed. Please try again."
+                ) from exc
+        finally:
+            _LOCAL_SPEECH_ADMISSION.release()
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={"Cache-Control": "no-store"},
+        )
+
     payload = {
         "model": settings.openai_speech_model,
         "voice": settings.openai_speech_voice,
@@ -443,9 +502,10 @@ async def speak(request: SpeechRequest, settings: SettingsDependency) -> Respons
     }
     if settings.openai_speech_model.startswith("gpt-4o-mini-tts"):
         payload["instructions"] = (
-            f"Read the supplied text clearly in {LANGUAGES[request.language_locale].label} "
-            f"({request.language_locale}), in a warm, professional clinic receptionist tone. "
-            "Do not add words or translate the text."
+            f"Use fluent, natural {SPEECH_LANGUAGE_NAMES[request.language_locale]} "
+            f"pronunciation ({request.language_locale}) in a warm, professional clinic "
+            "receptionist tone. Read the supplied Unicode text exactly. Do not translate, "
+            "transliterate, or add words."
         )
     upstream = await _openai_request(settings, "POST", "/audio/speech", json_body=payload)
     if not upstream.content or not upstream.headers.get("content-type", "").startswith("audio/"):

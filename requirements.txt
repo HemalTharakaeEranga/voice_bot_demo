@@ -6,4 +6,5 @@ pydantic-settings>=2.10,<3.0
 python-multipart>=0.0.20,<1.0
 httpx>=0.28,<1.0
 openai
+piper-tts==1.8.0
 python-dotenv
