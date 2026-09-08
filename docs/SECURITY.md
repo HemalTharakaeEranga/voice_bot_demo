@@ -40,9 +40,10 @@ source IP proves a user's identity.
   X-Forwarded-For, remove inactive buckets, and cap tracked clients at 4,096. Voice endpoints have
   a separate lower limit because cloud requests can consume paid quota and local synthesis uses
   significant CPU.
-- API responses use Cache-Control: no-store. Responses also receive a restrictive Content
-  Security Policy, frame denial, MIME sniffing protection, a same-origin resource policy,
-  referrer restrictions, and a microphone-only permissions policy.
+- API responses and the root document use `Cache-Control: no-store`; static assets must revalidate
+  before reuse. Responses also receive a restrictive Content Security Policy, frame denial, MIME
+  sniffing protection, a same-origin resource policy, referrer restrictions, and a microphone-only
+  permissions policy.
 - APP_ENV=production disables the OpenAPI schema and interactive documentation and enables an HSTS
   header. The production hostname must actually be served over HTTPS.
 - The frontend renders untrusted conversation text with textContent. API output has a JSON content

@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.dialogue.translations import LANGUAGES
 from app.local_tts import (
     LOCAL_VOICE_LOCALES,
+    MAX_LOCAL_SPEECH_CHARACTERS,
     LocalVoiceGenerationError,
     LocalVoiceUnavailableError,
     available_local_voice_locales,
@@ -152,6 +153,19 @@ class SpeechRequest(BaseModel):
         if value not in LANGUAGES:
             raise ValueError("Unsupported language locale")
         return value
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Speech text cannot be empty")
+        return normalized
+
+
+class LocalSpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_LOCAL_SPEECH_CHARACTERS)
+    language_locale: Literal["si-LK", "ta-LK", "ar-SA"]
 
     @field_validator("text")
     @classmethod
@@ -458,41 +472,50 @@ async def transcribe(
     )
 
 
+async def _local_speech_response(text: str, language_locale: str) -> Response:
+    if not _LOCAL_SPEECH_ADMISSION.acquire(blocking=False):
+        raise HTTPException(
+            503,
+            "Local speech is busy. Please try again shortly.",
+            headers={"Retry-After": "1"},
+        )
+    try:
+        try:
+            audio = await run_in_threadpool(
+                generate_local_speech,
+                text,
+                language_locale,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, "Local speech text is invalid.") from exc
+        except LocalVoiceUnavailableError as exc:
+            language = SPEECH_LANGUAGE_NAMES[language_locale]
+            raise HTTPException(
+                503,
+                f"The local {language} voice is unavailable. Check the server voice files.",
+            ) from exc
+        except LocalVoiceGenerationError as exc:
+            raise HTTPException(503, "Local speech generation failed. Please try again.") from exc
+    finally:
+        _LOCAL_SPEECH_ADMISSION.release()
+    return Response(
+        content=audio,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/tts/local")
+async def local_speech(request: LocalSpeechRequest) -> Response:
+    return await _local_speech_response(request.text, request.language_locale)
+
+
 @router.post("/voice/speak")
 async def speak(request: SpeechRequest, settings: SettingsDependency) -> Response:
+    # Preserve the unified route for existing clients while the browser uses
+    # the explicit local route for the three bundled Piper voices.
     if request.language_locale in LOCAL_VOICE_LOCALES:
-        if not _LOCAL_SPEECH_ADMISSION.acquire(blocking=False):
-            raise HTTPException(
-                429,
-                "Local speech is busy. Please try again shortly.",
-                headers={"Retry-After": "1"},
-            )
-        try:
-            try:
-                audio = await run_in_threadpool(
-                    generate_local_speech,
-                    request.text,
-                    request.language_locale,
-                )
-            except ValueError as exc:
-                raise HTTPException(422, "Local speech text is invalid.") from exc
-            except LocalVoiceUnavailableError as exc:
-                language = SPEECH_LANGUAGE_NAMES[request.language_locale]
-                raise HTTPException(
-                    503,
-                    f"The local {language} voice is unavailable. Check the server voice files.",
-                ) from exc
-            except LocalVoiceGenerationError as exc:
-                raise HTTPException(
-                    503, "Local speech generation failed. Please try again."
-                ) from exc
-        finally:
-            _LOCAL_SPEECH_ADMISSION.release()
-        return Response(
-            content=audio,
-            media_type="audio/wav",
-            headers={"Cache-Control": "no-store"},
-        )
+        return await _local_speech_response(request.text, request.language_locale)
 
     payload = {
         "model": settings.openai_speech_model,

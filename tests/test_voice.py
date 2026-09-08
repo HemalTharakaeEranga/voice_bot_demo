@@ -104,12 +104,12 @@ def test_missing_key_leaves_browser_metadata_available(voice_client):
 
 
 @pytest.mark.parametrize("locale", ["si-LK", "ta-LK", "ar-SA"])
-def test_local_speech_does_not_require_openai_key(voice_client, locale):
+def test_dedicated_local_speech_does_not_require_openai_key(voice_client, locale):
     client, settings, requests, _ = voice_client
     settings.openai_api_key = type(settings.openai_api_key)("")
     text = LANGUAGES[locale].prompts["ask_name"]
     response = client.post(
-        "/api/voice/speak",
+        "/api/tts/local",
         json={"text": text, "language_locale": locale},
     )
     assert response.status_code == 200
@@ -146,7 +146,7 @@ def test_local_speech_failures_are_safe(
 
     monkeypatch.setattr(voice, "generate_local_speech", fail_local_speech)
     response = client.post(
-        "/api/voice/speak",
+        "/api/tts/local",
         json={"text": "ආයුබෝවන්", "language_locale": "si-LK"},
     )
 
@@ -164,16 +164,32 @@ def test_local_speech_rejects_excess_concurrent_work(voice_client):
             assert voice._LOCAL_SPEECH_ADMISSION.acquire(blocking=False)
             acquired += 1
         response = client.post(
-            "/api/voice/speak",
+            "/api/tts/local",
             json={"text": "வணக்கம்", "language_locale": "ta-LK"},
         )
     finally:
         for _ in range(acquired):
             voice._LOCAL_SPEECH_ADMISSION.release()
 
-    assert response.status_code == 429
+    assert response.status_code == 503
     assert response.json() == {"detail": "Local speech is busy. Please try again shortly."}
     assert response.headers["retry-after"] == "1"
+    assert not requests
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"text": "Hello", "language_locale": "en-US"},
+        {"text": "   ", "language_locale": "si-LK"},
+        {"text": "x" * 1001, "language_locale": "ta-LK"},
+    ],
+)
+def test_dedicated_local_speech_rejects_nonlocal_or_oversized_input(voice_client, payload):
+    client, _, requests, _ = voice_client
+    response = client.post("/api/tts/local", json=payload)
+    assert response.status_code == 422
+    assert not client.app.state.local_speech_requests
     assert not requests
 
 

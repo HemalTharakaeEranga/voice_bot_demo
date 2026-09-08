@@ -372,6 +372,12 @@ def test_numeric_times_accept_localized_digits(value):
         ("en-US", "9:30am", "09:30"),
         ("en-US", "4pm", "16:00"),
         ("si-LK", "ප.ව. 4:30", "16:30"),
+        ("si-LK", "පෙරවරුව 11", "11:00"),
+        ("si-LK", "පස්වරු හතර", "16:00"),
+        ("si-LK", "පෙරවරුව අට", "08:00"),
+        ("si-LK", "පෙරවරුව අටට", "08:00"),
+        ("si-LK", "පස්වරු පහ", "17:00"),
+        ("si-LK", "පස්වරු 4:30ට", "16:30"),
         ("ta-LK", "மாலை 4:30", "16:30"),
         ("hi-IN", "शाम 4:30 बजे", "16:30"),
         ("es-ES", "4:30 de la tarde", "16:30"),
@@ -411,6 +417,34 @@ def test_common_english_spoken_times(value, expected):
 )
 def test_time_limits_still_apply(value):
     assert parse_appointment_time(value) is None
+
+
+@pytest.mark.parametrize("value", ["පෙරවරුව 7:59", "පස්වරු 5:01", "පෙරවරු පස්වරු 11"])
+def test_sinhala_spoken_time_limits_and_conflicts_still_apply(value):
+    assert parse_appointment_time(value, "si-LK") is None
+
+
+def test_sinhala_spoken_time_advances_the_booking_flow():
+    manager = DialogueManager()
+    session_id = str(uuid4())
+    manager.start_session(session_id, "si-LK")
+    saved = []
+
+    def send(value):
+        def save(payload):
+            saved.append(payload)
+            return _saved_booking(payload)
+
+        return manager.process_message(session_id, "si-LK", value, lambda *_: True, save)
+
+    assert send("හරිත් පෙරේරා").step == "specialty"
+    assert send("දන්ත").step == "appointment_date"
+    assert send((date.today() + timedelta(days=7)).isoformat()).step == "appointment_time"
+    confirmation = send("පස්වරු හතර")
+    assert confirmation.step == "confirm"
+    assert "16:00" in confirmation.assistant_text
+    assert send("ඔව්").status == "booked"
+    assert saved[0]["appointment_time"].strftime("%H:%M") == "16:00"
 
 
 def test_date_limits_and_unambiguous_format_still_apply():

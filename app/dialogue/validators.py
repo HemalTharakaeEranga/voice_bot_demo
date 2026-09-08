@@ -225,7 +225,10 @@ _MERIDIEM_MARKERS = {
         ("in the morning", "morning"),
         ("in the afternoon", "in the evening", "afternoon", "evening"),
     ),
-    "si-LK": (("පෙ.ව.", "පෙ.ව"), ("ප.ව.", "ප.ව")),
+    "si-LK": (
+        ("පෙරවරුව", "පෙරවරු", "පෙ.ව.", "පෙ.ව"),
+        ("පස්වරුව", "පස්වරු", "ප.ව.", "ප.ව"),
+    ),
     "ta-LK": (("முற்பகல்", "காலை"), ("பிற்பகல்", "மாலை")),
     "hi-IN": (("पूर्वाह्न", "सुबह"), ("अपराह्न", "दोपहर", "शाम")),
     "es-ES": (("de la mañana",), ("de la tarde", "de la noche")),
@@ -237,7 +240,7 @@ _MERIDIEM_MARKERS = {
 }
 _TIME_FILLERS = {
     "en-US": ("o'clock", "oclock", "at"),
-    "si-LK": ("පැයට", "ට"),
+    "si-LK": ("පැයට",),
     "ta-LK": ("மணிக்கு", "மணி"),
     "hi-IN": ("बजे",),
     "es-ES": ("a las", "a la", "horas", "hora"),
@@ -270,6 +273,36 @@ _ENGLISH_ONES = {
     "nineteen": 19,
 }
 _ENGLISH_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+_SINHALA_HOURS = {
+    "එක": 1,
+    "එකයි": 1,
+    "දෙක": 2,
+    "දෙකයි": 2,
+    "තුන": 3,
+    "තුනයි": 3,
+    "හතර": 4,
+    "හතරයි": 4,
+    "පහ": 5,
+    "පහයි": 5,
+    "හය": 6,
+    "හයයි": 6,
+    "හත": 7,
+    "හතයි": 7,
+    "අට": 8,
+    "අටයි": 8,
+    "නවය": 9,
+    "නවයයි": 9,
+    "දහය": 10,
+    "දහයයි": 10,
+    "එකොළහ": 11,
+    "එකොළහයි": 11,
+    "එකොලහ": 11,
+    "එකොලහයි": 11,
+    "දොළහ": 12,
+    "දොළහයි": 12,
+    "දොලහ": 12,
+    "දොලහයි": 12,
+}
 _CJK_DIGITS = {
     "〇": 0,
     "零": 0,
@@ -487,6 +520,9 @@ def _parse_clock_parts(value: str, language_locale: str) -> tuple[int, int] | No
     match = COMPACT_TIME_PATTERN.fullmatch(value)
     if match:
         return int(match.group(1)), int(match.group(2))
+    if language_locale == "si-LK":
+        hour = _SINHALA_HOURS.get(value)
+        return (hour, 0) if hour is not None else None
     if language_locale == "en-US":
         return _parse_english_time_words(value)
     return None
@@ -510,6 +546,12 @@ def parse_appointment_time(raw_value: str, language_locale: str = "en-US") -> ti
             value = _replace_ascii_word(value, filler, " ")
         else:
             value = value.replace(filler, " ")
+    if language_locale == "si-LK" and value.endswith("ට"):
+        # Sinhala commonly appends ට to a spoken time. Strip one suffix only when
+        # the remaining text is already a valid clock expression, preserving අට.
+        without_suffix = " ".join(value[:-1].split())
+        if _parse_clock_parts(without_suffix, language_locale) is not None:
+            value = without_suffix
     value = " ".join(value.split()).strip(" .")
     parsed_parts = _parse_clock_parts(value, language_locale)
     if parsed_parts is None:

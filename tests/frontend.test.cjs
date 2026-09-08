@@ -253,7 +253,7 @@ async function app(options = {}) {
           language_detected: false,
         });
       }
-      if (url === "/api/voice/speak") return response({});
+      if (["/api/voice/speak", "/api/tts/local"].includes(url)) return response({});
       throw new Error(`Unexpected request ${url}`);
     },
   };
@@ -311,7 +311,7 @@ test("selecting a bundled local voice displays and plays the exact localized gre
 
     assert.equal(ui.text().at(-1), localizedGreetings[locale]);
     assert.equal(ui.messageLocales().at(-1), locale);
-    const speech = ui.calls.filter((call) => call.url === "/api/voice/speak").at(-1);
+    const speech = ui.calls.filter((call) => call.url === "/api/tts/local").at(-1);
     assert.deepEqual(JSON.parse(speech.options.body), {
       text: localizedGreetings[locale],
       language_locale: locale,
@@ -349,7 +349,7 @@ test("auto recording sends auto plus fallback, locks reliable detection, and rep
   assert.equal(ui.run("lockedLocale"), "si-LK");
   assert.equal(ui.element("languageSelect").value, "auto");
   assert.match(ui.element("detectedLanguage").textContent, /Detected .*Sinhala/);
-  const speech = ui.calls.find((call) => call.url === "/api/voice/speak");
+  const speech = ui.calls.find((call) => call.url === "/api/tts/local");
   assert.equal(JSON.parse(speech.options.body).language_locale, "si-LK");
   assert.deepEqual(ui.messageLocales(), ["en-US", "si-LK", "si-LK"]);
 });
@@ -420,10 +420,10 @@ test("voice quota failure keeps OpenAI listening and the detected booking langua
   const ui = await app({
     voices: [{name: "English", lang: "en-US"}],
     transcriptions: [{
-      text: "මගේ නම හේමල්",
-      language_locale: "si-LK",
+      text: "Je m'appelle Hémal",
+      language_locale: "fr-FR",
       language_detected: true,
-      language_code: "si",
+      language_code: "fr",
     }],
     fetch: (url) => url === "/api/voice/speak"
       ? response({detail: "OpenAI usage limit reached"}, 429) : undefined,
@@ -432,14 +432,14 @@ test("voice quota failure keeps OpenAI listening and the detected booking langua
   ui.run("finishCapture()");
   await settle(8);
 
-  assert.equal(ui.run("lockedLocale"), "si-LK");
+  assert.equal(ui.run("lockedLocale"), "fr-FR");
   assert.equal(ui.run("speechProviderUnavailable"), true);
   assert.equal(ui.run("transcriptionProviderUnavailable"), false);
   assert.equal(ui.element("languageSelect").value, "auto");
   assert.equal(ui.element("listenButton").disabled, false);
   assert.match(ui.element("voiceAvailability").textContent, /OpenAI processes recordings/);
   assert.equal(ui.spoken.length, 0);
-  assert.match(ui.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
+  assert.match(ui.element("statusLine").textContent, /server voice quota/i);
 
   await ui.run('startCapture("booking")');
   assert.equal(ui.recorders.length, 2);
@@ -596,9 +596,11 @@ test("an OpenAI voice quota flag does not block a bundled local voice", async ()
   await ui.run(`speak(${JSON.stringify(localizedGreetings["si-LK"])}, true, "si-LK")`);
   await settle();
 
-  const calls = ui.calls.filter((call) => call.url === "/api/voice/speak");
-  assert.equal(calls.length, 2);
-  assert.equal(JSON.parse(calls[1].options.body).language_locale, "si-LK");
+  const cloudCalls = ui.calls.filter((call) => call.url === "/api/voice/speak");
+  const localCalls = ui.calls.filter((call) => call.url === "/api/tts/local");
+  assert.equal(cloudCalls.length, 1);
+  assert.equal(localCalls.length, 1);
+  assert.equal(JSON.parse(localCalls[0].options.body).language_locale, "si-LK");
   assert.equal(ui.audios.length, 1);
   assert.equal(ui.audios[0].playCalls, 1);
 });
@@ -610,8 +612,8 @@ test("a busy local voice does not disable OpenAI speech", async () => {
     localVoices: ["si-LK", "ta-LK", "ar-SA"],
     voices: [{name: "Sinhala", lang: "si-LK"}],
     fetch: (url) => {
-      if (url === "/api/voice/speak" && speechCalls++ === 0) {
-        return response({detail: "Local speech is busy. Please try again shortly."}, 429);
+      if (url === "/api/tts/local" && speechCalls++ === 0) {
+        return response({detail: "Local speech is busy. Please try again shortly."}, 503);
       }
       return undefined;
     },
@@ -622,37 +624,39 @@ test("a busy local voice does not disable OpenAI speech", async () => {
   await ui.run('speak("Hello", true, "en-US")');
   await settle();
 
-  const calls = ui.calls.filter((call) => call.url === "/api/voice/speak");
-  assert.equal(calls.length, 2);
-  assert.equal(JSON.parse(calls[1].options.body).language_locale, "en-US");
+  const localCalls = ui.calls.filter((call) => call.url === "/api/tts/local");
+  const cloudCalls = ui.calls.filter((call) => call.url === "/api/voice/speak");
+  assert.equal(localCalls.length, 1);
+  assert.equal(cloudCalls.length, 1);
+  assert.equal(JSON.parse(cloudCalls[0].options.body).language_locale, "en-US");
   assert.equal(ui.audios.length, 1);
 });
 
-test("local-language replies keep their exact text and locale in browser fallback", async () => {
+test("local-language replies use Piper even when availability metadata is stale", async () => {
   const cases = [
-    {locale: "si-LK", voice: {name: "Sinhala", lang: "si-LK"}},
-    {locale: "ta-LK", voice: {name: "Tamil India", lang: "ta-IN"}},
-    {locale: "ar-SA", voice: {name: "Arabic Jordan", lang: "ar-JO"}},
+    {locale: "si-LK"},
+    {locale: "ta-LK"},
+    {locale: "ar-SA"},
   ];
-  for (const {locale, voice} of cases) {
+  for (const {locale} of cases) {
     const reply = localizedGreetings[locale];
     const ui = await app({
       configured: false,
       locale,
-      voices: [voice],
       fetch: (url) => url === "/api/messages"
         ? response({assistant_text: reply, step: "specialty", status: "active"})
         : undefined,
     });
+    assert.match(ui.element("browserNotice").textContent, /local .* voice is not ready/i);
     await ui.run('sendMessage("Demo Patient")');
     await settle();
 
     assert.equal(ui.text().at(-1), reply);
     assert.equal(ui.messageLocales().at(-1), locale);
-    assert.equal(ui.spoken.length, 1);
-    assert.equal(ui.spoken[0].text, reply);
-    assert.equal(ui.spoken[0].lang, locale);
-    assert.equal(ui.spoken[0].voice.name, voice.name);
+    const localCall = ui.calls.find((call) => call.url === "/api/tts/local");
+    assert.deepEqual(JSON.parse(localCall.options.body), {text: reply, language_locale: locale});
+    assert.equal(ui.audios.length, 1);
+    assert.equal(ui.spoken.length, 0);
   }
 });
 
@@ -702,14 +706,14 @@ test("an autoplay block preserves generated audio for a direct reply-button repl
   assert.equal(ui.audios[0].playCalls, 1);
   assert.equal(ui.run("Boolean(pendingPlayback)"), true);
   assert.equal(replayButton.textContent, "Play audio");
-  const speechCalls = ui.calls.filter((call) => call.url === "/api/voice/speak").length;
+  const speechCalls = ui.calls.filter((call) => call.url === "/api/tts/local").length;
 
   await replayButton.emit("click");
   await settle();
   assert.equal(ui.audios[0].playCalls, 2);
   assert.equal(ui.run("pendingPlayback"), null);
   assert.equal(replayButton.textContent, "Listen");
-  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/speak").length, speechCalls);
+  assert.equal(ui.calls.filter((call) => call.url === "/api/tts/local").length, speechCalls);
 });
 
 test("Test voice reuses prepared audio after an autoplay block", async () => {
@@ -727,14 +731,16 @@ test("Test voice reuses prepared audio after an autoplay block", async () => {
   await settle();
   assert.equal(ui.audios[0].playCalls, 2);
   assert.equal(ui.run("pendingPlayback"), null);
-  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/speak").length, 1);
+  assert.equal(ui.calls.filter((call) => call.url === "/api/tts/local").length, 1);
 });
 
 test("generated speech requests the selected locale for all ten languages", async () => {
   for (const locale of locales) {
     const ui = await app({locale});
     await ui.run('speak("Localized assistant reply", true)');
-    const calls = ui.calls.filter((call) => call.url === "/api/voice/speak");
+    const expectedPath = ["si-LK", "ta-LK", "ar-SA"].includes(locale)
+      ? "/api/tts/local" : "/api/voice/speak";
+    const calls = ui.calls.filter((call) => call.url === expectedPath);
     assert.equal(calls.length, 1, locale);
     assert.equal(JSON.parse(calls[0].options.body).language_locale, locale);
     assert.equal(ui.audios.length, 1, locale);
@@ -759,6 +765,23 @@ test("a transient generated speech error is retried on the next reply", async ()
   assert.equal(ui.audios.length, 1);
 });
 
+test("the application rate limit is temporary and is not saved as an OpenAI quota failure", async () => {
+  let speechCalls = 0;
+  const ui = await app({
+    locale: "de-DE",
+    voices: [{name: "Deutsch", lang: "de-DE"}],
+    fetch: (url) => url === "/api/voice/speak" && speechCalls++ === 0
+      ? response({detail: "Too many requests. Please try again shortly."}, 429) : undefined,
+  });
+  await ui.run('speak("Guten Tag", true)');
+  assert.equal(ui.run("speechProviderUnavailable"), false);
+  assert.equal(ui.spoken.length, 1);
+
+  await ui.run('speak("Willkommen", true)');
+  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/speak").length, 2);
+  assert.equal(ui.audios.length, 1);
+});
+
 test("audio playback error cannot create a replay loop", async () => {
   const ui = await app({locale: "en-US", voices: [{name: "English", lang: "en-US"}]});
   await ui.run('speak("Hello", true)');
@@ -766,6 +789,18 @@ test("audio playback error cannot create a replay loop", async () => {
   ui.audios[0].fail();
   ui.audios[0].fail();
   assert.equal(ui.spoken.length, 1);
+});
+
+test("a local audio playback error never falls through to a missing system voice", async () => {
+  const ui = await app({
+    configured: false,
+    locale: "si-LK",
+    voices: [{name: "English", lang: "en-US"}],
+  });
+  await ui.run('speak("ආයුබෝවන්", true)');
+  ui.audios[0].fail();
+  assert.equal(ui.spoken.length, 0);
+  assert.match(ui.element("statusLine").textContent, /local audio could not be played/i);
 });
 
 test("browser playback chooses an exact voice and never assigns a different language", async () => {
@@ -782,13 +817,13 @@ test("browser playback chooses an exact voice and never assigns a different lang
     locale: "si-LK",
     voices: [{name: "English", lang: "en-US"}],
   });
-  await absent.run('speak("ආයුබෝවන්", true)');
+  absent.run('speakWithBrowser("ආයුබෝවන්", "si-LK", speechVersion)');
   assert.equal(absent.spoken.length, 0);
   assert.match(absent.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
 });
 
-test("browser fallback requests all ten locale tags when its voice list is empty", async () => {
-  for (const locale of locales) {
+test("browser fallback requests every cloud locale tag when its voice list is empty", async () => {
+  for (const locale of locales.filter((item) => !["si-LK", "ta-LK", "ar-SA"].includes(item))) {
     const ui = await app({configured: false, locale, voices: []});
     await ui.run('speak("Localized assistant reply", true)');
     assert.equal(ui.spoken.length, 1, locale);
@@ -828,24 +863,24 @@ test("Chinese playback accepts a compatible simplified Mandarin voice", async ()
 test("an actual browser language error gives actionable voice setup guidance", async () => {
   const ui = await app({
     configured: false,
-    locale: "si-LK",
+    locale: "hi-IN",
     voices: [],
     synthesisError: "language-unavailable",
   });
-  await ui.run('speak("ආයුබෝවන්", true)');
-  assert.match(ui.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
+  await ui.run('speak("नमस्ते", true)');
+  assert.match(ui.element("statusLine").textContent, /could not provide .*Hindi speech/i);
   assert.match(ui.element("statusLine").textContent, /install and enable/i);
 });
 
 test("a synchronous browser synthesis failure is handled without losing text", async () => {
   const ui = await app({
     configured: false,
-    locale: "si-LK",
+    locale: "hi-IN",
     synthesisThrow: true,
   });
-  await ui.run('speak("ආයුබෝවන්", true)');
+  await ui.run('speak("नमस्ते", true)');
   assert.equal(ui.spoken.length, 1);
-  assert.match(ui.element("statusLine").textContent, /could not provide .*Sinhala speech/i);
+  assert.match(ui.element("statusLine").textContent, /could not provide .*Hindi speech/i);
 });
 
 test("speaking practice remains isolated from the booking session", async () => {

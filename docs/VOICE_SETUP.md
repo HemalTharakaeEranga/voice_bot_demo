@@ -7,10 +7,11 @@ key is configured, the browser records a short clip and sends it to the same-ori
 endpoint. The server uses OpenAI for transcription, and the API key never enters JavaScript, HTML,
 or a browser response. The demo does not store uploaded audio.
 
-Reply playback uses the same `/api/voice/speak` endpoint for every supported language. Sinhala
-(`si-LK`), Tamil (`ta-LK`), and Arabic (`ar-SA`) are synthesized locally with bundled Piper models
-and returned as WAV audio. The other seven languages use OpenAI speech when the key is configured
-and return MP3 audio. The browser receives audio bytes, never a provider choice or API credential.
+Reply playback routes Sinhala (`si-LK`), Tamil (`ta-LK`), and Arabic (`ar-SA`) to the dedicated
+`/api/tts/local` endpoint. Bundled Piper models return WAV audio without using OpenAI. The other
+seven languages use `/api/voice/speak`, which returns OpenAI MP3 audio when the key is configured.
+The older `/api/voice/speak` contract still routes the three local locales to Piper for backward
+compatibility. The browser receives audio bytes, never a provider choice or API credential.
 
 The local Arabic route maps the application's Saudi Arabia locale (`ar-SA`) to the available
 Jordanian `ar_JO-kareem-medium` model. Both use the Arabic language family, but accent and regional
@@ -55,9 +56,9 @@ a language from the transcript's alphabet and never presents a fallback as a det
 
 After one reliable detection, later recordings send the supported locale explicitly. With
 `gpt-transcribe`, this uses its plural language-hint field; compatible older transcription models
-use the singular ISO-639-1 field. Localized assistant text is then sent to the unified server
-speech endpoint. Sinhala, Tamil, and Arabic produce local WAV audio; the other seven locales
-produce OpenAI MP3 audio when OpenAI is configured.
+use the singular ISO-639-1 field. Localized assistant text is then sent to the matching server
+speech endpoint. Sinhala, Tamil, and Arabic use `/api/tts/local` and produce local WAV audio; the
+other seven locales use `/api/voice/speak` and produce OpenAI MP3 audio when OpenAI is configured.
 
 This is speech recognition and synthesis, not model training or pronunciation grading. Names,
 accents, background noise, and short phrases can still be recognized incorrectly. Keep typed
@@ -116,7 +117,8 @@ paid key is configured.
 | `GET /api/config` | None | Configuration status, available local voice locales, clinic date/UTC offset, ten language records, and model names; never the key |
 | `POST /api/voice/check` | No body | Model visibility status without generating or transcribing audio |
 | `POST /api/voice/transcribe` | Multipart `audio`, `language_locale`, optional `fallback_locale` | Transcript and safe language-resolution metadata |
-| `POST /api/voice/speak` | JSON `text` and a supported `language_locale` | Uncached `audio/wav` for `si-LK`/`ta-LK`/`ar-SA`; uncached `audio/mpeg` for the other seven locales |
+| `POST /api/tts/local` | JSON `text` (up to 1,000 characters) and `si-LK`, `ta-LK`, or `ar-SA` | Uncached local `audio/wav` |
+| `POST /api/voice/speak` | JSON `text` and any supported `language_locale` | Uncached OpenAI `audio/mpeg` for the seven cloud locales; backward-compatible local WAV routing for the other three |
 
 Reliable automatic detection returns this shape:
 
@@ -161,7 +163,8 @@ automatic detection should send `auto` plus one of the ten supported fallback lo
   before loading, local synthesis text is bounded, and no user value selects a filesystem path.
 - Piper runs in a worker thread with a lock per local voice, keeping CPU-bound synthesis off the
   asynchronous request loop and serializing access to each loaded model. A process admits at most
-  two local synthesis jobs at once and returns HTTP 429 while both slots are occupied.
+  two local synthesis jobs at once and returns HTTP 503 with `Retry-After` while both slots are
+  occupied.
 
 The voice endpoints do not construct or execute SQL. Appointment persistence remains behind the
 application's validated booking flow and SQLAlchemy repository.
@@ -190,6 +193,7 @@ microphone, voice quality, or accent accuracy.
 | API key or permissions rejected / HTTP 502 | Check the key's project, status, and model permissions. Never paste it into the browser. |
 | Model unavailable / HTTP 502 | Confirm the configured model IDs are available to the API project. |
 | OpenAI usage limit / HTTP 429 | Restore API billing or project quota, then select **Listen** on the reply to retry without reloading the page. Local Sinhala, Tamil, and Arabic playback remains available. |
+| Too many requests / HTTP 429 | Wait for the response's `Retry-After` interval; this is the demo's per-process request limiter, not automatically an OpenAI quota failure. |
 | OpenAI timeout / HTTP 504 | Check server connectivity and retry one short recording. |
 | Invalid or empty audio / HTTP 422 | Re-record an audible phrase using a supported browser recording format. |
 | Unsupported recording / HTTP 415 | Use WebM, MP4/M4A, WAV, or MP3/MPEG audio. |
@@ -198,6 +202,8 @@ microphone, voice quality, or accent accuracy.
 | Microphone unavailable | Use localhost or HTTPS, grant microphone permission, and check the selected input device. |
 | Generated audio was blocked by the browser | Select **Play audio** on that reply; the already generated audio is reused without another API request. |
 | Local Sinhala, Tamil, or Arabic voice unavailable / HTTP 503 | Run `git lfs pull`, confirm the six model files are present, reinstall `requirements.txt`, and compare their SHA-256 values with `models/README.md`. A small text file beginning with `version https://git-lfs.github.com/spec/v1` is an unfetched LFS pointer. |
+| Local speech busy / HTTP 503 | Two local synthesis jobs are active. Wait briefly, then select **Listen** to retry. |
+| A local locale still calls `/api/voice/speak` in the browser | Restart Uvicorn and hard-refresh the page so the browser loads the current `/api/tts/local` routing code. |
 | Arabic playback has a different regional accent | The bundled Arabic model is Jordanian (`ar_JO`) while the application locale is Saudi Arabia (`ar-SA`). Use a reviewed Saudi model if exact regional pronunciation is required. |
 | Browser cannot speak one of the other seven locales | Restore OpenAI API access or install/enable a matching language speech voice in the operating system, then restart the browser. |
 

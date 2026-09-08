@@ -25,7 +25,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python -m ruff check app tests
       - run: python -m bandit -r app -lll
-      - run: python -m pip_audit -r requirements.txt
+      - run: python -m pip_audit -r requirements-dev.txt
       - run: python -m pytest
       - run: node --check app/static/app.js
       - run: node --test tests/frontend.test.cjs

@@ -18,6 +18,16 @@ def test_health(client):
     assert response.json() == {"status": "ok"}
 
 
+@pytest.mark.parametrize(
+    ("path", "expected_cache_control"),
+    [("/", "no-store"), ("/static/app.js", "no-cache"), ("/static/styles.css", "no-cache")],
+)
+def test_frontend_entry_files_are_revalidated(client, path, expected_cache_control):
+    response = client.get(path, headers={"host": "localhost"})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == expected_cache_control
+
+
 def test_start_session_and_security_headers(client):
     response = client.post(
         "/api/sessions",
@@ -117,8 +127,8 @@ def test_voice_endpoints_have_a_separate_configurable_rate_limit():
     headers = {"host": "localhost"}
     with TestClient(test_app) as test_client:
         first = test_client.post("/api/voice/speak", json={}, headers=headers)
-        second = test_client.post("/api/voice/speak", json={}, headers=headers)
-        limited = test_client.post("/api/voice/speak", json={}, headers=headers)
+        second = test_client.post("/api/tts/local", json={}, headers=headers)
+        limited = test_client.post("/api/tts/local", json={}, headers=headers)
         booking = test_client.post(
             "/api/sessions",
             json={"language_locale": "en-US"},

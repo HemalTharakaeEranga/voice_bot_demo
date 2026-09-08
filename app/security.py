@@ -36,8 +36,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "img-src 'self' data:; media-src 'self' blob:; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         )
-        if request.url.path.startswith("/api/"):
+        if request.url.path.startswith("/api/") or request.url.path == "/":
             response.headers["Cache-Control"] = "no-store"
+        elif request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
         if self.enable_hsts:
             response.headers["Strict-Transport-Security"] = "max-age=31536000"
         return response

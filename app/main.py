@@ -67,7 +67,7 @@ def create_app(
             else voice_rate_limit_requests
         ),
         window_seconds=settings.rate_limit_window_seconds,
-        path_prefixes=("/api/voice/",),
+        path_prefixes=("/api/voice/", "/api/tts/"),
     )
     application.add_middleware(SameOriginMiddleware)
     application.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)

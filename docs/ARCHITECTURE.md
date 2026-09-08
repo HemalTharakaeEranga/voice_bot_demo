@@ -33,8 +33,9 @@ One microphone button
                                    |
                          localized assistant response
                                    |
-                    unified /api/voice/speak route
+                    locale-based speech routing
                          /                    \
+      /api/tts/local                    /api/voice/speak
       Sinhala / Tamil / Arabic          other seven locales
               local Piper WAV             OpenAI speech MP3
                          \                    /
@@ -55,8 +56,9 @@ arbitrary spoken language.
 For reply playback, the server routes `si-LK`, `ta-LK`, and `ar-SA` to pinned local Piper models.
 Those paths do not need an OpenAI key or quota and return WAV audio. The Arabic application locale
 maps to the Jordanian `ar_JO-kareem-medium` voice, so regional pronunciation can differ. The
-remaining seven locales use the server-controlled OpenAI speech model and return MP3 audio. Both
-paths share the same endpoint and client control.
+remaining seven locales use the server-controlled OpenAI speech model and return MP3 audio. The
+browser uses separate same-origin endpoints behind the same client control. `/api/voice/speak`
+keeps local routing for backward compatibility with older clients.
 
 Each assistant message has a direct replay control and a listed same-language browser voice is the
 fallback. If generated audio is ready but browser autoplay blocks it, that control keeps the audio

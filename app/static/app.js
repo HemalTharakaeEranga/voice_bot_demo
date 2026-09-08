@@ -5,6 +5,7 @@ const languageSelect = $("languageSelect");
 const textInput = $("textInput");
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AUTO_LOCALE = "auto";
+const LOCAL_TTS_LOCALES = new Set(["si-LK", "ta-LK", "ar-SA"]);
 const DEFAULT_LOCALE = "en-US";
 const bookingSteps = ["patient_name", "specialty", "appointment_date", "appointment_time", "confirm"];
 
@@ -56,6 +57,9 @@ function localeLabel(locale) {
 function localVoiceAvailable(locale) {
   return Array.isArray(config.local_voice_locales)
     && config.local_voice_locales.includes(locale);
+}
+function usesLocalTts(locale) {
+  return LOCAL_TTS_LOCALES.has(locale);
 }
 function isAutomatic() {
   return languageSelect.value === AUTO_LOCALE;
@@ -206,7 +210,9 @@ function json(body, signal) {
   };
 }
 function isQuotaError(error) {
-  return error.status === 429 || /quota|usage limit|billing/i.test(error.message || "");
+  return /quota|usage limit|billing|insufficient[_ ]quota|credit|spend limit/i.test(
+    error.message || "",
+  );
 }
 function isPersistentProviderError(error) {
   return isQuotaError(error) || [401, 402, 403].includes(error.status)
@@ -360,6 +366,10 @@ async function playPreparedAudio() {
       return false;
     }
     clearAudio(prepared.audio);
+    if (usesLocalTts(prepared.locale)) {
+      status("The local audio could not be played. Select Listen to generate it again.", "error");
+      return false;
+    }
     return speakWithBrowser(
       prepared.text,
       prepared.locale,
@@ -386,7 +396,7 @@ async function speak(text, force = false, locale = effectiveLocale, actionButton
   if (!force && !$("autoSpeak").checked) return;
   stopSpeech();
   const token = speechVersion;
-  const useLocalVoice = localVoiceAvailable(locale);
+  const useLocalVoice = usesLocalTts(locale);
   if (!useLocalVoice && (!config.openai_configured || speechProviderUnavailable)) {
     speakWithBrowser(text, locale, token);
     return;
@@ -394,7 +404,8 @@ async function speak(text, force = false, locale = effectiveLocale, actionButton
   try {
     speechRequest = new AbortController();
     status(useLocalVoice ? "Preparing the offline voice…" : "Preparing the AI-generated voice…", "processing");
-    const response = await request("/api/voice/speak", json({
+    const speechPath = useLocalVoice ? "/api/tts/local" : "/api/voice/speak";
+    const response = await request(speechPath, json({
       text,
       language_locale: locale,
     }, speechRequest.signal));
@@ -412,6 +423,10 @@ async function speak(text, force = false, locale = effectiveLocale, actionButton
     currentAudio.onerror = () => {
       if (token !== speechVersion || audio !== currentAudio) return;
       clearAudio(currentAudio);
+      if (useLocalVoice) {
+        status("The local audio could not be played. Select Listen to try again.", "error");
+        return;
+      }
       speakWithBrowser(text, locale, token,
         browserVoiceUnavailableMessage(locale, "The generated audio could not be played."));
     };
@@ -441,9 +456,11 @@ async function speak(text, force = false, locale = effectiveLocale, actionButton
       speechProviderUnavailable = true;
       capabilities();
     }
-    const fallbackMessage = useLocalVoice
-      ? browserVoiceUnavailableMessage(locale, error.message)
-      : isQuotaError(error)
+    if (useLocalVoice) {
+      status(error.message || "The local voice is unavailable. Please try again.", "error");
+      return;
+    }
+    const fallbackMessage = isQuotaError(error)
       ? browserVoiceUnavailableMessage(locale, "The server voice quota has been reached.")
       : browserVoiceUnavailableMessage(locale, "The generated voice is unavailable.");
     speakWithBrowser(text, locale, token, fallbackMessage);
@@ -479,8 +496,11 @@ function capabilities() {
       : "This browser has no speech recognition; text booking remains available.");
   }
   if (listeningLocale) {
-    if (localVoiceAvailable(listeningLocale)) {
-      notes.push("Replies use the bundled offline " + localeLabel(listeningLocale) + " voice.");
+    if (usesLocalTts(listeningLocale)) {
+      notes.push(localVoiceAvailable(listeningLocale)
+        ? "Replies use the bundled offline " + localeLabel(listeningLocale) + " voice."
+        : "The local " + localeLabel(listeningLocale)
+          + " voice is not ready on this server. Check the bundled model files.");
     } else if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
       notes.push("This browser has no speech playback service.");
     } else if ((!config.openai_configured || speechProviderUnavailable)
