@@ -2,7 +2,7 @@ import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, datetime, time
 from threading import Lock
 from time import monotonic
 
@@ -17,6 +17,7 @@ from app.dialogue.validators import (
 SlotAvailabilityChecker = Callable[[date, time], bool]
 BookingSaver = Callable[[dict[str, object]], dict[str, str]]
 Clock = Callable[[], float]
+WallClock = Callable[[], datetime]
 DEFAULT_SESSION_TTL_SECONDS = 30 * 60
 DEFAULT_MAX_SESSIONS = 1000
 
@@ -59,6 +60,7 @@ class DialogueManager:
         session_ttl_seconds: float = DEFAULT_SESSION_TTL_SECONDS,
         max_sessions: int = DEFAULT_MAX_SESSIONS,
         clock: Clock = monotonic,
+        wall_clock: WallClock = datetime.now,
     ) -> None:
         if session_ttl_seconds <= 0:
             raise ValueError("session_ttl_seconds must be greater than zero")
@@ -67,6 +69,7 @@ class DialogueManager:
         self._session_ttl_seconds = session_ttl_seconds
         self._max_sessions = max_sessions
         self._clock = clock
+        self._wall_clock = wall_clock
         self._sessions: OrderedDict[str, ConversationState] = OrderedDict()
         self._lock = Lock()
 
@@ -135,7 +138,11 @@ class DialogueManager:
                 return DialogueResult(language.prompts["ask_date"], state.step)
 
             if state.step == "appointment_date":
-                parsed_date = parse_appointment_date(user_text)
+                parsed_date = parse_appointment_date(
+                    user_text,
+                    state.language_locale,
+                    reference_date=self._wall_clock().date(),
+                )
                 if parsed_date is None:
                     state.failure_count += 1
                     return DialogueResult(language.prompts["invalid_date"], state.step)
@@ -145,13 +152,16 @@ class DialogueManager:
                 return DialogueResult(language.prompts["ask_time"], state.step)
 
             if state.step == "appointment_time":
-                parsed_time = parse_appointment_time(user_text)
+                parsed_time = parse_appointment_time(user_text, state.language_locale)
                 if parsed_time is None:
                     state.failure_count += 1
                     return DialogueResult(language.prompts["invalid_time"], state.step)
                 if state.appointment_date is None:
                     state.step = "appointment_date"
                     return DialogueResult(language.prompts["ask_date"], state.step)
+                if not self._is_future_slot(state.appointment_date, parsed_time):
+                    state.failure_count += 1
+                    return DialogueResult(language.prompts["invalid_time"], state.step)
                 if not is_slot_available(state.appointment_date, parsed_time):
                     return DialogueResult(language.prompts["slot_taken"], state.step)
                 state.appointment_time = parsed_time
@@ -170,6 +180,10 @@ class DialogueManager:
                     if state.appointment_date is None or state.appointment_time is None:
                         state.step = "appointment_date"
                         return DialogueResult(language.prompts["ask_date"], state.step)
+                    if not self._is_future_slot(state.appointment_date, state.appointment_time):
+                        state.step = "appointment_time"
+                        state.appointment_time = None
+                        return DialogueResult(language.prompts["invalid_time"], state.step)
                     if not is_slot_available(state.appointment_date, state.appointment_time):
                         state.step = "appointment_time"
                         return DialogueResult(language.prompts["slot_taken"], state.step)
@@ -205,6 +219,12 @@ class DialogueManager:
             if self._sessions[oldest_session_id].last_access > cutoff:
                 break
             self._sessions.popitem(last=False)
+
+    def _is_future_slot(self, appointment_date: date, appointment_time: time) -> bool:
+        now = self._wall_clock()
+        if appointment_date != now.date():
+            return appointment_date > now.date()
+        return appointment_time > now.time()
 
     def _handle_global_commands(
         self, state: ConversationState, normalized_text: str

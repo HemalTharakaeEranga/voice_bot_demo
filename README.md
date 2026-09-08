@@ -7,9 +7,10 @@ A multilingual clinic appointment demo with a responsive business interface, aut
 - Ten configured locales: English (`en-US`), Sinhala (`si-LK`), Tamil (`ta-LK`), Hindi (`hi-IN`), Spanish (`es-ES`), French (`fr-FR`), German (`de-DE`), Arabic (`ar-SA`), Chinese (`zh-CN`), Japanese (`ja-JP`).
 - One voice control that uses server-side OpenAI speech when configured, or browser speech after the user explicitly selects a language. The API key stays on the server.
 - Browser playback always requests the conversation's exact locale. When the browser voice list is incomplete, the browser chooses its own suitable locale voice; the application never explicitly substitutes English for a non-English reply.
-- Automatic OpenAI detection accepts only one reliable match among the same ten configured locales. Missing, unsupported, or conflicting metadata uses the selected fallback without claiming it was detected.
+- Automatic OpenAI detection supplies the same ten-language allowlist to `gpt-transcribe` and accepts only one reliable match. Missing, unsupported, or conflicting metadata uses the selected fallback without claiming it was detected.
 - Voice practice: play a localized sample, read it aloud, and compare the recognized transcript. This is a transcript match check, not pronunciation grading, model training, or fine-tuning.
-- Guided booking with appointment date/time validation, slot conflict protection, cancellation, and receptionist-assistance paths.
+- Guided booking accepts ISO dates, localized month names such as `September 23`, unambiguous
+  short dates such as `9/23`, and common spoken times such as `9:30 AM` or `5 PM`.
 - Security headers, separate API and paid-voice rate limits, input validation, tests, Docker, and CI.
 
 Ten configured interface languages do not mean guaranteed speech recognition in every language. Sinhala OpenAI speech is experimental; use text whenever speech is unavailable or inaccurate. AI-generated voices are disclosed in the interface.
@@ -52,6 +53,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
    OPENAI_SPEECH_VOICE=coral
    OPENAI_TIMEOUT_SECONDS=45
    VOICE_RATE_LIMIT_REQUESTS=30
+   CLINIC_UTC_OFFSET_MINUTES=330
    ```
 
 3. Restart Uvicorn and start a new booking. The unified voice control uses the configured server path automatically.
@@ -59,11 +61,15 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 The page makes no paid voice request when it loads. Speech generation and transcription use your API project's paid quota. The browser cannot choose the provider model, API host, or key. Never put the key in JavaScript, HTML, a screenshot, or a committed file. `.env` is ignored by Git.
 
+`CLINIC_UTC_OFFSET_MINUTES` defines the clinic's booking clock and defaults to `330`
+(UTC+05:30, Sri Lanka). Set the signed UTC offset for the clinic before deployment so yearless
+dates and same-day time validation do not depend on the server machine's clock zone.
+
 See [Voice setup and troubleshooting](docs/VOICE_SETUP.md) for provider behavior, per-language testing, and endpoint details. The integration follows the [official OpenAI transcription documentation](https://developers.openai.com/api/docs/guides/speech-to-text) and [speech synthesis documentation](https://developers.openai.com/api/docs/guides/text-to-speech).
 
 ## Test the demo
 
-Use fake patient details only. With OpenAI configured, start by speaking and verify the detected conversation language; without it, select a language first. Enter a fake name, specialty, a future date in `YYYY-MM-DD` format, and a time such as `10:30`. Confirm only after checking the displayed details. This demo does not connect to a real hospital, contact a receptionist, or provide medical advice.
+Use fake patient details only. With OpenAI configured, start by speaking and verify the detected conversation language; without it, select a language first. Enter a fake name, specialty, a future date such as `2026-09-23`, `September 23`, or `9/23`, and a time such as `10:30` or `9:30 AM`. Confirm only after checking the displayed details. This demo does not connect to a real hospital, contact a receptionist, or provide medical advice.
 
 Use voice practice separately to test the microphone, recognition, and sample playback for each locale. A matching transcript is evidence that a particular sample was recognized; it is not a guarantee that all names, accents, dates, or conversations will be recognized correctly.
 

@@ -36,10 +36,11 @@ One microphone button
                  OpenAI speech, then same-locale browser voice fallback
 ```
 
-The browser never receives the OpenAI API key. Automatic mode sends the first recording without a
-language hint. The server accepts a detected language only when provider metadata resolves to one
-unique member of the fixed ten-language allowlist. That locale is then fixed for the booking so a
-short name, date, or time cannot change the conversation language. A new booking unlocks detection.
+The browser never receives the OpenAI API key. With `gpt-transcribe`, automatic mode sends the ten
+supported codes as language hints. The server accepts a detected language only when provider
+metadata resolves to one unique member of that fixed allowlist. That locale is then fixed for the
+booking so a short name, date, or time cannot change the conversation language. A new booking
+unlocks detection.
 
 If server speech is unavailable after a language has been fixed, the same microphone control can
 continue with browser recognition fixed to that locale. Before a language is known, the user must
@@ -56,6 +57,13 @@ default. The application never explicitly assigns a different-language voice.
 `/api/messages` validates that identifier, updates the deterministic booking state, and uses
 SQLAlchemy expression queries and ORM inserts. The database unique constraint on date and time is
 the final protection against concurrent slot conflicts. Completed confirmations are idempotent.
+
+Date and time parsing is local and allowlisted; no input is interpreted as code or passed to SQL.
+It accepts localized digits, configured month names, locale-ordered short dates, common clock
+markers, and a bounded set of spoken English clock phrases. Yearless dates resolve to their next
+valid occurrence within 365 days. The API uses `CLINIC_UTC_OFFSET_MINUTES` (330 by default) as the
+authoritative clinic clock and rejects same-day slots that have passed, including a final recheck
+at confirmation.
 
 Sessions expire after 30 minutes, the process keeps at most 1,000 least-recently-used sessions, and
 unknown or evicted identifiers receive a fixed 404. Session state is process-local, so run this

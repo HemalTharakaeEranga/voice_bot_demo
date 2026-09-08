@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 import httpx
 import pytest
@@ -11,6 +12,18 @@ from app.dialogue.translations import LANGUAGES
 
 DEMO_KEY = "test-only-never-a-real-key"
 WEBM_AUDIO = b"\x1a\x45\xdf\xa3" + b"demo audio bytes"
+TRANSCRIPTION_HINTS = {
+    "en-US": "en",
+    "si-LK": "si",
+    "ta-LK": "ta",
+    "hi-IN": "hi",
+    "es-ES": "es",
+    "fr-FR": "fr",
+    "de-DE": "de",
+    "ar-SA": "ar",
+    "zh-CN": "zh-cn",
+    "ja-JP": "ja",
+}
 
 
 @pytest.fixture
@@ -45,11 +58,13 @@ def voice_client(monkeypatch):
 
 
 def test_public_config_exposes_ten_languages_but_no_key(voice_client):
-    client, _, requests, _ = voice_client
+    client, settings, requests, _ = voice_client
     response = client.get("/api/config")
     assert response.status_code == 200
     payload = response.json()
     assert payload["openai_configured"] is True
+    assert date.fromisoformat(payload["clinic_today"]).isoformat() == payload["clinic_today"]
+    assert payload["clinic_utc_offset_minutes"] == settings.clinic_utc_offset_minutes
     assert payload["models"]["transcription"] == "gpt-transcribe"
     assert set(voice.LANGUAGE_CODE_TO_LOCALE.values()) == set(LANGUAGES)
     assert {language["locale"] for language in payload["languages"]} == set(LANGUAGES)
@@ -111,8 +126,10 @@ def test_explicit_transcription_preserves_language_hint_and_uses_safe_filename(
     assert b'filename="recording.webm"' in request.content
     assert b"private-key" not in request.content
     assert b'name="response_format"\r\n\r\njson' in request.content
-    language = locale.split("-")[0].encode()
-    assert b'name="language"\r\n\r\n' + language in request.content
+    language = TRANSCRIPTION_HINTS[locale].encode()
+    assert b'name="languages[]"\r\n\r\n' + language in request.content
+    assert request.content.count(b'name="languages[]"') == 1
+    assert b'name="language"\r\n\r\n' not in request.content
 
 
 @pytest.mark.parametrize(
@@ -154,8 +171,11 @@ def test_auto_transcription_maps_each_supported_language(
         "language_code": code,
     }
     assert b'name="model"\r\n\r\ngpt-transcribe' in requests[0].content
-    assert b'name="language"' not in requests[0].content
-    assert b'name="languages"' not in requests[0].content
+    expected_hints = list(TRANSCRIPTION_HINTS.values())
+    assert requests[0].content.count(b'name="languages[]"') == len(expected_hints)
+    for hint in expected_hints:
+        assert b'name="languages[]"\r\n\r\n' + hint.encode() in requests[0].content
+    assert b'name="language"\r\n\r\n' not in requests[0].content
 
 
 @pytest.mark.parametrize(
@@ -258,6 +278,28 @@ def test_model_without_detection_metadata_does_not_claim_detection(voice_client)
         "language_detected": False,
     }
     assert b"gpt-4o-mini-transcribe" in requests[0].content
+    assert b'name="language"\r\n\r\n' not in requests[0].content
+    assert b'name="languages[]"' not in requests[0].content
+
+
+@pytest.mark.parametrize(("locale", "hint"), TRANSCRIPTION_HINTS.items())
+def test_transcription_language_hint_mapping_is_stable(locale, hint):
+    assert voice._transcription_language_code(locale) == hint
+
+
+def test_non_gpt_transcribe_model_uses_singular_explicit_language_hint(voice_client):
+    client, settings, requests, replies = voice_client
+    settings.openai_transcription_model = "gpt-4o-mini-transcribe"
+    replies.append(httpx.Response(200, json={"text": "bonjour"}))
+    response = client.post(
+        "/api/voice/transcribe",
+        data={"language_locale": "fr-FR"},
+        files={"audio": ("sample.webm", WEBM_AUDIO, "audio/webm")},
+    )
+
+    assert response.status_code == 200
+    assert b'name="language"\r\n\r\nfr' in requests[0].content
+    assert b'name="languages[]"' not in requests[0].content
 
 
 def test_explicit_locale_never_switches_on_different_provider_metadata(voice_client):

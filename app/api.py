@@ -1,9 +1,11 @@
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.dialogue.manager import DialogueManager, SessionNotFoundError
 from app.repository import SlotUnavailableError, create_appointment, is_slot_available
@@ -15,7 +17,9 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api")
-dialogue_manager = DialogueManager()
+settings = get_settings()
+clinic_timezone = timezone(timedelta(minutes=settings.clinic_utc_offset_minutes))
+dialogue_manager = DialogueManager(wall_clock=lambda: datetime.now(clinic_timezone))
 
 
 @router.post("/sessions", response_model=StartSessionResponse)

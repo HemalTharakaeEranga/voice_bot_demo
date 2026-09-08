@@ -16,10 +16,11 @@ or another language. Browser and operating-system support varies, and the browse
 an online service. Typed booking remains available in every case.
 
 The first unlocked recording sends `language_locale=auto` and a supported `fallback_locale`.
-Automatic mode deliberately omits both the singular `language` hint and the plural `languages`
-hint. With the default `gpt-transcribe` model, OpenAI may return a `languages` array. The server
-switches the booking locale only when that metadata resolves to exactly one of these configured
-locales:
+With the default `gpt-transcribe` model, the server sends the ten allowlisted language codes in the
+plural `languages[]` hint. This limits recognition to the languages offered by the interface and
+lets OpenAI return a detected `languages` array. After a language is selected or reliably detected,
+later recordings send only that language as the plural hint. The server switches the booking
+locale only when response metadata resolves to exactly one of these configured locales:
 
 | Spoken language | Locale | Accepted canonical code |
 | --- | --- | --- |
@@ -40,9 +41,10 @@ containing multiple different supported languages never triggers a locale switch
 then returns the declared fallback with `language_detected: false`. The application does not guess
 a language from the transcript's alphabet and never presents a fallback as a detection.
 
-After one reliable detection, later recordings send the supported locale explicitly. This gives
-OpenAI an ISO-639-1 language hint for better accuracy and latency. Localized assistant text is
-then sent to the server speech endpoint for generated MP3 playback.
+After one reliable detection, later recordings send the supported locale explicitly. With
+`gpt-transcribe`, this uses its plural language-hint field; compatible older transcription models
+use the singular ISO-639-1 field. Localized assistant text is then sent to the server speech
+endpoint for generated MP3 playback.
 
 This is speech recognition and synthesis, not model training or pronunciation grading. Names,
 accents, background noise, and short phrases can still be recognized incorrectly. Keep typed
@@ -59,6 +61,7 @@ OPENAI_SPEECH_MODEL=gpt-4o-mini-tts
 OPENAI_SPEECH_VOICE=coral
 OPENAI_TIMEOUT_SECONDS=45
 VOICE_RATE_LIMIT_REQUESTS=30
+CLINIC_UTC_OFFSET_MINUTES=330
 ```
 
 Create the key in your [OpenAI API project](https://platform.openai.com/api-keys), then restart
@@ -79,7 +82,7 @@ paid key is configured.
 
 | Endpoint | Request | Success |
 | --- | --- | --- |
-| `GET /api/config` | None | Configuration status, ten language records, and model names; never the key |
+| `GET /api/config` | None | Configuration status, clinic date/UTC offset, ten language records, and model names; never the key |
 | `POST /api/voice/check` | No body | Model visibility status without generating or transcribing audio |
 | `POST /api/voice/transcribe` | Multipart `audio`, `language_locale`, optional `fallback_locale` | Transcript and safe language-resolution metadata |
 | `POST /api/voice/speak` | JSON `text` and a supported `language_locale` | Uncached `audio/mpeg` bytes |

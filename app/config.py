@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     rate_limit_requests: int = Field(default=60, ge=1, le=10000)
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     voice_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
+    clinic_utc_offset_minutes: int = Field(default=330, ge=-720, le=840)
     openai_api_key: SecretStr = SecretStr("")
     openai_transcription_model: str = Field(
         default="gpt-transcribe", pattern=r"^[A-Za-z0-9._-]{1,100}$"

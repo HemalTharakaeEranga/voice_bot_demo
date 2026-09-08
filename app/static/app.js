@@ -8,7 +8,12 @@ const AUTO_LOCALE = "auto";
 const DEFAULT_LOCALE = "en-US";
 const bookingSteps = ["patient_name", "specialty", "appointment_date", "appointment_time", "confirm"];
 
-let config = {openai_configured: false, languages: []};
+let config = {
+  openai_configured: false,
+  clinic_today: "",
+  clinic_utc_offset_minutes: 0,
+  languages: [],
+};
 let sessionId = null;
 let version = 0;
 let ended = false;
@@ -18,7 +23,11 @@ let capture = null;
 let effectiveLocale = DEFAULT_LOCALE;
 let lockedLocale = null;
 let detectionUnconfirmed = false;
-let providerUnavailable = false;
+// Speech generation and transcription are separate services. A failure in one
+// must never turn off the other; otherwise a TTS quota/model error can disable
+// the microphone and automatic language detection for the rest of the page.
+let speechProviderUnavailable = false;
+let transcriptionProviderUnavailable = false;
 let recorderUnavailable = false;
 let speechVersion = 0;
 let speechRequest = null;
@@ -66,7 +75,7 @@ function status(message, state = "ready") {
   document.querySelector(".voice-card")?.classList.toggle("is-speaking", state === "speaking");
 }
 function serverRecordingAvailable() {
-  return config.openai_configured && !providerUnavailable && !recorderUnavailable
+  return config.openai_configured && !transcriptionProviderUnavailable && !recorderUnavailable
     && Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 }
 function captureStrategy() {
@@ -172,6 +181,10 @@ function json(body, signal) {
 function isQuotaError(error) {
   return error.status === 429 || /quota|usage limit|billing/i.test(error.message || "");
 }
+function isPersistentProviderError(error) {
+  return isQuotaError(error) || [401, 402, 403].includes(error.status)
+    || /api key|authentication|unauthorized|permissions/i.test(error.message || "");
+}
 function isProviderAvailabilityError(error) {
   return error.status === 0 || [401, 402, 403, 429, 500, 502, 503, 504].includes(error.status);
 }
@@ -182,6 +195,9 @@ function recordingServiceMessage(error) {
       ? "The server voice quota has been reached. Click Start listening again to use browser recognition, or type your reply."
       : "The server voice quota has been reached. Select a specific language to use browser recognition, or type your reply.";
   }
+  if (!isPersistentProviderError(error)) {
+    return "The server transcription service is temporarily unavailable. Click Start listening again to retry, or type your reply.";
+  }
   return browserReady
     ? "The server voice service is unavailable. Click Start listening again to use browser recognition, or type your reply."
     : "Automatic voice detection is unavailable. Select a specific language for browser recognition, or type your reply.";
@@ -189,6 +205,20 @@ function recordingServiceMessage(error) {
 
 function normalizedVoiceLocale(locale) {
   return String(locale || "").toLowerCase().replaceAll("_", "-");
+}
+function compatibleVoiceLocale(requestedLocale, voiceLocale) {
+  const requested = normalizedVoiceLocale(requestedLocale);
+  const candidate = normalizedVoiceLocale(voiceLocale);
+  if (!requested || !candidate) return false;
+  const requestedBase = requested.split("-")[0];
+  const candidateParts = candidate.split("-");
+  if (candidateParts[0] !== requestedBase) return false;
+  if (requestedBase !== "zh") return true;
+
+  // zh-CN content uses Mandarin and simplified characters. Do not select a
+  // Cantonese or traditional-Chinese regional voice merely because it shares
+  // the `zh` primary tag. Generic zh and zh-Hans variants remain compatible.
+  return !candidateParts.some((part) => ["hant", "hk", "mo", "tw", "yue"].includes(part));
 }
 function matchingVoice(locale = effectiveLocale) {
   const voices = window.speechSynthesis?.getVoices() || [];
@@ -198,9 +228,8 @@ function matchingVoice(locale = effectiveLocale) {
   const exact = voices.find((voice) => normalizedVoiceLocale(voice.lang) === normalized);
   if (exact) return exact;
   const generic = voices.find((voice) => normalizedVoiceLocale(voice.lang) === base);
-  if (generic || base === "zh") return generic || null;
-  return voices.find((voice) => normalizedVoiceLocale(voice.lang).split("-")[0] === base)
-    || null;
+  if (generic) return generic;
+  return voices.find((voice) => compatibleVoiceLocale(normalized, voice.lang)) || null;
 }
 function clearAudio(expectedAudio = null) {
   if (expectedAudio && audio !== expectedAudio) return;
@@ -269,7 +298,7 @@ async function speak(text, force = false) {
   stopSpeech();
   const token = speechVersion;
   const locale = effectiveLocale;
-  if (!config.openai_configured || providerUnavailable) {
+  if (!config.openai_configured || speechProviderUnavailable) {
     speakWithBrowser(text, locale, token);
     return;
   }
@@ -305,8 +334,8 @@ async function speak(text, force = false) {
     if (token !== speechVersion || error.name === "AbortError") return;
     speechRequest = null;
     clearAudio();
-    if (isProviderAvailabilityError(error)) {
-      providerUnavailable = true;
+    if (isPersistentProviderError(error)) {
+      speechProviderUnavailable = true;
       capabilities();
     }
     const fallbackMessage = isQuotaError(error)
@@ -334,7 +363,7 @@ function capabilities() {
 
   const notes = [];
   if (!window.isSecureContext) notes.push("Microphone access needs HTTPS or localhost.");
-  if (config.openai_configured && !providerUnavailable) {
+  if (config.openai_configured && !transcriptionProviderUnavailable) {
     $("voiceAvailability").textContent = "OpenAI processes recordings only after you press Start listening. This demo does not store audio.";
     notes.push("Automatic detection is available for recorded speech; detection can be uncertain for short names or phrases.");
   } else if (listeningLocale && Recognition) {
@@ -377,6 +406,13 @@ function localDate(date) {
   return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0")
     + "-" + String(date.getDate()).padStart(2, "0");
 }
+function clinicDate() {
+  const value = String(config.clinic_today || "");
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return new Date();
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return localDate(parsed) === value ? parsed : new Date();
+}
 function progress(step, result = "active") {
   const index = bookingSteps.indexOf(step);
   document.querySelectorAll("#bookingProgress [data-step]").forEach((item) => {
@@ -411,7 +447,7 @@ function progress(step, result = "active") {
     input.required = true;
     input.setAttribute("aria-label", isDate ? "Appointment date" : "Appointment time");
     if (isDate) {
-      const now = new Date();
+      const now = clinicDate();
       input.min = localDate(now);
       const max = new Date(now);
       max.setDate(max.getDate() + 365);
@@ -435,8 +471,8 @@ function progress(step, result = "active") {
   textInput.placeholder = {
     patient_name: "Type a demo patient name…",
     specialty: "Choose or type a specialty…",
-    appointment_date: "YYYY-MM-DD",
-    appointment_time: "HH:MM · 08:00–17:00",
+    appointment_date: "September 23, 9/23, or YYYY-MM-DD",
+    appointment_time: "9 AM, 9:30 AM, or 14:30",
     confirm: "Confirm or choose another time…",
   }[step] || "Type your reply…";
   controls();
@@ -713,7 +749,7 @@ async function startServerRecording(active) {
     } catch (error) {
       if (active.version !== version || error.name === "AbortError") return;
       if (isProviderAvailabilityError(error)) {
-        providerUnavailable = true;
+        if (isPersistentProviderError(error)) transcriptionProviderUnavailable = true;
         capabilities();
         status(recordingServiceMessage(error), "error");
       } else {

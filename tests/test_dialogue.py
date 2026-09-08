@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -314,6 +314,47 @@ def test_numeric_dates_accept_localized_digits_and_year_first_separators(digits,
 
 
 @pytest.mark.parametrize(
+    "locale,value",
+    [
+        ("en-US", "September 23"),
+        ("en-US", "Sep. 23rd, please"),
+        ("en-US", "23 September"),
+        ("si-LK", "සැප්තැම්බර් 23"),
+        ("ta-LK", "செப்டம்பர் 23"),
+        ("hi-IN", "23 सितंबर"),
+        ("es-ES", "23 de septiembre"),
+        ("fr-FR", "23 septembre"),
+        ("de-DE", "23. September"),
+        ("ar-SA", "٢٣ سبتمبر"),
+        ("zh-CN", "九月二十三日"),
+        ("ja-JP", "9月23日"),
+    ],
+)
+def test_spoken_september_dates_are_recognized(locale, value):
+    reference = date(2026, 9, 8)
+    assert parse_appointment_date(value, locale, reference_date=reference) == date(2026, 9, 23)
+
+
+@pytest.mark.parametrize("value", ["9/23", "9-23", "9 23", "09/23."])
+def test_unambiguous_yearless_numeric_date_uses_next_occurrence(value):
+    reference = date(2026, 9, 24)
+    assert parse_appointment_date(value, reference_date=reference) == date(2027, 9, 23)
+
+
+def test_ambiguous_yearless_numeric_date_uses_explicit_locale_order():
+    reference = date(2026, 1, 1)
+    assert parse_appointment_date("3/11", "en-US", reference_date=reference) == date(2026, 3, 11)
+    assert parse_appointment_date("3/11", "fr-FR", reference_date=reference) == date(2026, 11, 3)
+
+
+def test_iso_date_accepts_terminal_speech_punctuation():
+    reference = date(2026, 9, 8)
+    assert parse_appointment_date(
+        "2026-09-23.", reference_date=reference
+    ) == date(2026, 9, 23)
+
+
+@pytest.mark.parametrize(
     "value", ["09:30", "9:30", "09 30", "09.30", "٠٩:٣٠", "०९:३०", "０９：３０"]
 )
 def test_numeric_times_accept_localized_digits(value):
@@ -322,7 +363,52 @@ def test_numeric_times_accept_localized_digits(value):
     assert parsed.strftime("%H:%M") == "09:30"
 
 
-@pytest.mark.parametrize("value", ["07:59", "17:01", "24:00", "09:60", "nine thirty", "09:30pm"])
+@pytest.mark.parametrize(
+    "locale,value,expected",
+    [
+        ("en-US", "9:30 AM.", "09:30"),
+        ("en-US", "9 AM", "09:00"),
+        ("en-US", "5 PM", "17:00"),
+        ("en-US", "9:30am", "09:30"),
+        ("en-US", "4pm", "16:00"),
+        ("si-LK", "ප.ව. 4:30", "16:30"),
+        ("ta-LK", "மாலை 4:30", "16:30"),
+        ("hi-IN", "शाम 4:30 बजे", "16:30"),
+        ("es-ES", "4:30 de la tarde", "16:30"),
+        ("fr-FR", "16 h 30", "16:30"),
+        ("fr-FR", "9h30", "09:30"),
+        ("de-DE", "16:30 Uhr", "16:30"),
+        ("ar-SA", "٤:٣٠ مساءً", "16:30"),
+        ("zh-CN", "下午4点30分", "16:30"),
+        ("ja-JP", "午後4時30分", "16:30"),
+    ],
+)
+def test_spoken_time_formats_across_supported_languages(locale, value, expected):
+    parsed = parse_appointment_time(value, locale)
+    assert parsed is not None
+    assert parsed.strftime("%H:%M") == expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("nine thirty", "09:30"),
+        ("ten o'clock", "10:00"),
+        ("half past ten", "10:30"),
+        ("half to nine", "08:30"),
+        ("quarter to five PM", "16:45"),
+    ],
+)
+def test_common_english_spoken_times(value, expected):
+    parsed = parse_appointment_time(value)
+    assert parsed is not None
+    assert parsed.strftime("%H:%M") == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["07:59", "17:01", "24:00", "09:60", "7 AM", "5:01 PM", "9 AM PM"],
+)
 def test_time_limits_still_apply(value):
     assert parse_appointment_time(value) is None
 
@@ -332,6 +418,54 @@ def test_date_limits_and_unambiguous_format_still_apply():
     assert parse_appointment_date((date.today() + timedelta(days=366)).isoformat()) is None
     assert parse_appointment_date("09/10/2026") is None
     assert parse_appointment_date("2026-02-30") is None
+
+
+def test_same_day_past_time_is_rejected_using_backend_wall_clock():
+    manager = DialogueManager(wall_clock=lambda: datetime(2026, 9, 23, 10, 0))
+    session_id = str(uuid4())
+    manager.start_session(session_id, "en-US")
+
+    def send(value):
+        return manager.process_message(
+            session_id,
+            "en-US",
+            value,
+            lambda *_: True,
+            _saved_booking,
+        )
+
+    assert send("Demo Patient").step == "specialty"
+    assert send("Dental").step == "appointment_date"
+    assert send("September 23").step == "appointment_time"
+    assert send("9:30 AM").step == "appointment_time"
+    assert send("10 AM").step == "appointment_time"
+    assert send("10:30 AM").step == "confirm"
+
+
+def test_slot_is_rechecked_against_wall_clock_at_confirmation():
+    current = [datetime(2026, 9, 23, 9, 0)]
+    manager = DialogueManager(wall_clock=lambda: current[0])
+    session_id = str(uuid4())
+    manager.start_session(session_id, "en-US")
+
+    def send(value):
+        return manager.process_message(
+            session_id,
+            "en-US",
+            value,
+            lambda *_: True,
+            _saved_booking,
+        )
+
+    for value, step in [
+        ("Demo Patient", "specialty"),
+        ("Dental", "appointment_date"),
+        ("September 23", "appointment_time"),
+        ("9:30 AM", "confirm"),
+    ]:
+        assert send(value).step == step
+    current[0] = datetime(2026, 9, 23, 9, 31)
+    assert send("yes").step == "appointment_time"
 
 
 def test_slot_taken_at_confirmation_does_not_save_booking():

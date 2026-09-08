@@ -28,12 +28,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "cardiology, dermatology, pediatrics, or dental?"
             ),
             "ask_date": (
-                "What date would you like? Please say or type it as year month day, "
-                "for example 2026-09-10."
+                "What date would you like? You can say September 23, type 9/23, "
+                "or use a full date such as 2026-09-23."
             ),
             "ask_time": (
-                "What time would you like between 08:00 and 17:00? Please say or type "
-                "it as hour and minute, for example 10:30."
+                "What time would you like between 08:00 and 17:00? You can say 9 AM "
+                "or 9:30 AM, or use 24-hour time such as 14:30."
             ),
             "confirm": (
                 "Please confirm: {name}, {specialty}, on {date} at {time}. Say yes to "
@@ -48,12 +48,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "between 08:00 and 17:00."
             ),
             "invalid_date": (
-                "I could not validate that date. Please use year month day, for "
-                "example 2026-09-10, and choose a date within the next 365 days."
+                "I could not validate that date. Try September 23, 9/23, or a full "
+                "date such as 2026-09-23, within the next 365 days."
             ),
             "invalid_time": (
-                "I could not validate that time. Please use 24-hour hour and minute "
-                "format between 08:00 and 17:00, for example 10:30."
+                "I could not validate that time. Try 9 AM, 9:30 AM, or 14:30, and "
+                "choose a future time between 08:00 and 17:00."
             ),
             "not_yes_no": "Please say yes to book, or no to choose another time.",
             "cancelled": "The booking conversation has been cancelled. No appointment was created.",

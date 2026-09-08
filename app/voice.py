@@ -1,6 +1,7 @@
 """Server-side OpenAI speech; the booking state machine stays deterministic."""
 
 import unicodedata
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 import httpx
@@ -105,6 +106,8 @@ class VoiceModels(BaseModel):
 
 class VoiceConfig(BaseModel):
     openai_configured: bool
+    clinic_today: date
+    clinic_utc_offset_minutes: int
     languages: list[VoiceLanguage]
     models: VoiceModels
 
@@ -162,7 +165,7 @@ async def _openai_request(
     method: str,
     path: str,
     *,
-    data: dict[str, str] | None = None,
+    data: dict[str, str | list[str]] | None = None,
     files: dict[str, tuple[str, bytes, str]] | None = None,
     json_body: dict[str, str] | None = None,
 ) -> httpx.Response:
@@ -227,6 +230,34 @@ def _normalize_language_identifier(value: str) -> str:
     )
 
 
+def _transcription_language_code(locale: str) -> str:
+    """Return an allowlisted provider hint for one configured locale."""
+    normalized = locale.casefold()
+    # Preserve the documented regional form for Simplified Chinese. The other
+    # configured locales use their ISO-639-1 language code.
+    return normalized if normalized.startswith("zh-") else normalized.split("-", 1)[0]
+
+
+def _transcription_form_data(
+    settings: Settings, language_locale: str
+) -> dict[str, str | list[str]]:
+    data: dict[str, str | list[str]] = {
+        "model": settings.openai_transcription_model,
+        "response_format": "json",
+    }
+    if settings.openai_transcription_model.startswith("gpt-transcribe"):
+        selected_locales = LANGUAGES if language_locale == "auto" else (language_locale,)
+        # gpt-transcribe uses the plural field. Constraining automatic mode to
+        # the product's fixed allowlist improves recognition while still
+        # allowing the provider to report that detection was uncertain.
+        data["languages[]"] = [
+            _transcription_language_code(locale) for locale in selected_locales
+        ]
+    elif language_locale != "auto":
+        data["language"] = _transcription_language_code(language_locale)
+    return data
+
+
 def _supported_detected_language(payload: dict) -> tuple[str, str] | None:
     """Return a configured locale and canonical ISO code from trusted response fields."""
     candidates: list[object] = []
@@ -272,8 +303,11 @@ def _supported_detected_language(payload: dict) -> tuple[str, str] | None:
 @router.get("/config", response_model=VoiceConfig)
 def voice_config(response: Response, settings: SettingsDependency) -> VoiceConfig:
     response.headers["Cache-Control"] = "no-store"
+    clinic_timezone = timezone(timedelta(minutes=settings.clinic_utc_offset_minutes))
     return VoiceConfig(
         openai_configured=settings.openai_configured,
+        clinic_today=datetime.now(clinic_timezone).date(),
+        clinic_utc_offset_minutes=settings.clinic_utc_offset_minutes,
         languages=[
             VoiceLanguage(
                 locale=language.locale,
@@ -353,9 +387,7 @@ async def transcribe(
     finally:
         await audio.close()
 
-    data = {"model": settings.openai_transcription_model, "response_format": "json"}
-    if language_locale != "auto":
-        data["language"] = language_locale.split("-", 1)[0]
+    data = _transcription_form_data(settings, language_locale)
     upstream = await _openai_request(
         settings,
         "POST",
