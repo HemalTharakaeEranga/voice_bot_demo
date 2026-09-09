@@ -9,7 +9,8 @@
 3. Verify the displayed transcript and selected-language indicator. The selected locale stays fixed
    for this booking.
 4. Say or select a specialty.
-5. Give a future date in `YYYY-MM-DD` format and a time between `08:00` and `17:00`.
+5. Give a future date such as `September 23`, `9/23`, `23/09`, or `2026/09/23`, then a time
+   between `08:00` and `17:00` such as `9 AM`, `9:30`, `9/30`, or a localized spoken time.
 6. Confirm using the localized yes phrase and show the demo confirmation code.
 7. Select Sinhala or another configured language. The change starts a fresh booking; repeat a
    short flow.

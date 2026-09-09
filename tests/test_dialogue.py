@@ -335,16 +335,158 @@ def test_spoken_september_dates_are_recognized(locale, value):
     assert parse_appointment_date(value, locale, reference_date=reference) == date(2026, 9, 23)
 
 
+@pytest.mark.parametrize(
+    "locale,value,expected_day",
+    [
+        ("en-US", "September 09", 9),
+        ("en-US", "September 09, 2026", 9),
+        ("en-US", "September ninth", 9),
+        ("en-US", "September twenty third", 23),
+        ("si-LK", "සැප්තැම්බර් විසි තුන", 23),
+        ("ta-LK", "செப்டம்பர் இருபத்து மூன்று", 23),
+        ("hi-IN", "सितंबर तेईस", 23),
+        ("es-ES", "veintitrés de septiembre", 23),
+        ("fr-FR", "vingt-trois septembre", 23),
+        ("de-DE", "dreiundzwanzigsten September", 23),
+        ("ar-SA", "الثالث والعشرين من سبتمبر", 23),
+        ("zh-CN", "九月二十三日", 23),
+        ("ja-JP", "九月二十三日", 23),
+    ],
+)
+def test_spoken_day_words_are_recognized_without_partial_matching(
+    locale, value, expected_day
+):
+    reference = date(2026, 9, 8)
+    assert parse_appointment_date(value, locale, reference_date=reference) == date(
+        2026, 9, expected_day
+    )
+
+
+@pytest.mark.parametrize(
+    "locale,month,day_words_text",
+    [
+        (
+            "si-LK",
+            "ඔක්තෝබර්",
+            "දහතුන|දහහතර|පහළොව|දහසය|දහහත|දහඅට|දහනවය|විස්ස|විසි එක|"
+            "විසි දෙක|විසි තුන|විසි හතර|විසි පහ|විසි හය|විසි හත|විසි අට|"
+            "විසි නවය|තිහ|තිස් එක",
+        ),
+        (
+            "ta-LK",
+            "அக்டோபர்",
+            "பதின்மூன்று|பதினான்கு|பதினைந்து|பதினாறு|பதினேழு|பதினெட்டு|"
+            "பத்தொன்பது|இருபது|இருபத்தொன்று|இருபத்திரண்டு|இருபத்துமூன்று|"
+            "இருபத்துநான்கு|இருபத்தைந்து|இருபத்தாறு|இருபத்தேழு|இருபத்தெட்டு|"
+            "இருபத்தொன்பது|முப்பது|முப்பத்தொன்று",
+        ),
+        (
+            "hi-IN",
+            "अक्टूबर",
+            "तेरह|चौदह|पंद्रह|सोलह|सत्रह|अठारह|उन्नीस|बीस|इक्कीस|बाईस|तेईस|"
+            "चौबीस|पच्चीस|छब्बीस|सत्ताईस|अट्ठाईस|उनतीस|तीस|इकतीस",
+        ),
+        (
+            "es-ES",
+            "octubre",
+            "trece|catorce|quince|dieciséis|diecisiete|dieciocho|diecinueve|"
+            "veinte|veintiuno|veintidós|veintitrés|veinticuatro|veinticinco|"
+            "veintiséis|veintisiete|veintiocho|veintinueve|treinta|treinta y uno",
+        ),
+        (
+            "fr-FR",
+            "octobre",
+            "treize|quatorze|quinze|seize|dix-sept|dix-huit|dix-neuf|vingt|"
+            "vingt et un|vingt-deux|vingt-trois|vingt-quatre|vingt-cinq|vingt-six|"
+            "vingt-sept|vingt-huit|vingt-neuf|trente|trente et un",
+        ),
+        (
+            "de-DE",
+            "Oktober",
+            "dreizehnten|vierzehnten|fünfzehnten|sechzehnten|siebzehnten|"
+            "achtzehnten|neunzehnten|zwanzigsten|einundzwanzigsten|"
+            "zweiundzwanzigsten|dreiundzwanzigsten|vierundzwanzigsten|"
+            "fünfundzwanzigsten|sechsundzwanzigsten|siebenundzwanzigsten|"
+            "achtundzwanzigsten|neunundzwanzigsten|dreißigsten|einunddreißigsten",
+        ),
+        (
+            "ar-SA",
+            "أكتوبر",
+            "الثالث عشر|الرابع عشر|الخامس عشر|السادس عشر|السابع عشر|الثامن عشر|"
+            "التاسع عشر|العشرين|الحادي والعشرين|الثاني والعشرين|الثالث والعشرين|"
+            "الرابع والعشرين|الخامس والعشرين|السادس والعشرين|السابع والعشرين|"
+            "الثامن والعشرين|التاسع والعشرين|الثلاثين|الحادي والثلاثين",
+        ),
+    ],
+)
+def test_localized_spoken_days_cover_thirteen_through_thirty_one(
+    locale, month, day_words_text
+):
+    reference = date(2026, 9, 1)
+    day_words = day_words_text.split("|")
+    assert len(day_words) == 19
+    for expected_day, day_words_value in enumerate(day_words, start=13):
+        if locale == "de-DE":
+            spoken_date = f"am {day_words_value} {month}"
+        elif locale == "ar-SA":
+            spoken_date = f"في {day_words_value} من {month}"
+        elif locale == "es-ES":
+            spoken_date = f"{day_words_value} de {month}"
+        else:
+            spoken_date = f"{month} {day_words_value}"
+        assert parse_appointment_date(
+            spoken_date, locale, reference_date=reference
+        ) == date(2026, 10, expected_day)
+
+
 @pytest.mark.parametrize("value", ["9/23", "9-23", "9 23", "09/23."])
 def test_unambiguous_yearless_numeric_date_uses_next_occurrence(value):
     reference = date(2026, 9, 24)
     assert parse_appointment_date(value, reference_date=reference) == date(2027, 9, 23)
 
 
-def test_ambiguous_yearless_numeric_date_uses_explicit_locale_order():
+@pytest.mark.parametrize(
+    "value", ["2026/09/23", "2026-09-23", "2026.09.23", "2026 09 23"]
+)
+def test_year_first_date_accepts_common_separator_variants(value):
+    reference = date(2026, 9, 8)
+    assert parse_appointment_date(value, reference_date=reference) == date(2026, 9, 23)
+
+
+@pytest.mark.parametrize(
+    "locale,value",
+    [
+        ("en-US", "09/23/2026"),
+        ("en-US", "09-23-2026"),
+        ("si-LK", "23/09/2026"),
+        ("ta-LK", "23-09-2026"),
+        ("hi-IN", "23.09.2026"),
+        ("es-ES", "23 09 2026"),
+        ("fr-FR", "23/09/2026"),
+        ("de-DE", "23.09.2026"),
+        ("ar-SA", "٢٣/٠٩/٢٠٢٦"),
+        ("zh-CN", "09/23/2026"),
+        ("ja-JP", "09/23/2026"),
+    ],
+)
+def test_year_last_date_uses_the_selected_locale_order(locale, value):
+    reference = date(2026, 9, 8)
+    assert parse_appointment_date(value, locale, reference_date=reference) == date(2026, 9, 23)
+
+
+@pytest.mark.parametrize("value", ["3/11", "3.11", "3-11", "3 11", "3/11/2026"])
+def test_ambiguous_numeric_date_uses_explicit_locale_order(value):
     reference = date(2026, 1, 1)
-    assert parse_appointment_date("3/11", "en-US", reference_date=reference) == date(2026, 3, 11)
-    assert parse_appointment_date("3/11", "fr-FR", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "en-US", reference_date=reference) == date(2026, 3, 11)
+    assert parse_appointment_date(value, "zh-CN", reference_date=reference) == date(2026, 3, 11)
+    assert parse_appointment_date(value, "ja-JP", reference_date=reference) == date(2026, 3, 11)
+    assert parse_appointment_date(value, "si-LK", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "ta-LK", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "hi-IN", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "es-ES", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "fr-FR", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "de-DE", reference_date=reference) == date(2026, 11, 3)
+    assert parse_appointment_date(value, "ar-SA", reference_date=reference) == date(2026, 11, 3)
 
 
 def test_iso_date_accepts_terminal_speech_punctuation():
@@ -355,7 +497,18 @@ def test_iso_date_accepts_terminal_speech_punctuation():
 
 
 @pytest.mark.parametrize(
-    "value", ["09:30", "9:30", "09 30", "09.30", "٠٩:٣٠", "०९:३०", "０９：３０"]
+    "value",
+    [
+        "09:30",
+        "9:30",
+        "09 30",
+        "09.30",
+        "9/30",
+        "9-30",
+        "٠٩:٣٠",
+        "०९:३०",
+        "０９：３０",
+    ],
 )
 def test_numeric_times_accept_localized_digits(value):
     parsed = parse_appointment_time(value)
@@ -379,14 +532,42 @@ def test_numeric_times_accept_localized_digits(value):
         ("si-LK", "පස්වරු පහ", "17:00"),
         ("si-LK", "පස්වරු 4:30ට", "16:30"),
         ("ta-LK", "மாலை 4:30", "16:30"),
+        ("ta-LK", "காலை ஒன்பது மணி", "09:00"),
+        ("ta-LK", "மாலை நான்கு மணி", "16:00"),
         ("hi-IN", "शाम 4:30 बजे", "16:30"),
+        ("hi-IN", "सुबह नौ बजे", "09:00"),
+        ("hi-IN", "शाम चार बजे", "16:00"),
         ("es-ES", "4:30 de la tarde", "16:30"),
+        ("es-ES", "a las nueve de la mañana", "09:00"),
+        ("es-ES", "las nueve de la mañana", "09:00"),
+        ("es-ES", "cuatro de la tarde", "16:00"),
         ("fr-FR", "16 h 30", "16:30"),
         ("fr-FR", "9h30", "09:30"),
+        ("fr-FR", "neuf heures du matin", "09:00"),
+        ("fr-FR", "quatre heures de l'après-midi", "16:00"),
         ("de-DE", "16:30 Uhr", "16:30"),
+        ("de-DE", "morgens neun Uhr", "09:00"),
+        ("de-DE", "nachmittags vier Uhr", "16:00"),
         ("ar-SA", "٤:٣٠ مساءً", "16:30"),
+        ("ar-SA", "الساعة التاسعة صباحًا", "09:00"),
+        ("ar-SA", "الساعة الرابعة مساءً", "16:00"),
         ("zh-CN", "下午4点30分", "16:30"),
+        ("zh-CN", "上午九点", "09:00"),
+        ("zh-CN", "下午四点", "16:00"),
+        ("zh-CN", "下午四点三十分", "16:30"),
         ("ja-JP", "午後4時30分", "16:30"),
+        ("ja-JP", "午前九時", "09:00"),
+        ("ja-JP", "午後四時", "16:00"),
+        ("ja-JP", "午後四時三十分", "16:30"),
+        ("si-LK", "පෙරවරුව නවය තිහ", "09:30"),
+        ("ta-LK", "காலை ஒன்பது மணி முப்பது நிமிடம்", "09:30"),
+        ("hi-IN", "सुबह नौ बजकर तीस मिनट", "09:30"),
+        ("es-ES", "las nueve y media de la mañana", "09:30"),
+        ("fr-FR", "neuf heures trente du matin", "09:30"),
+        ("de-DE", "neun Uhr dreißig morgens", "09:30"),
+        ("ar-SA", "الساعة التاسعة والنصف صباحًا", "09:30"),
+        ("zh-CN", "下午四点半", "16:30"),
+        ("ja-JP", "午後四時半", "16:30"),
     ],
 )
 def test_spoken_time_formats_across_supported_languages(locale, value, expected):
@@ -409,6 +590,23 @@ def test_common_english_spoken_times(value, expected):
     parsed = parse_appointment_time(value)
     assert parsed is not None
     assert parsed.strftime("%H:%M") == expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("9", "09:00"), ("9am", "09:00"), ("9 am", "09:00"), ("9.30", "09:30"), ("9/30", "09:30")],
+)
+def test_common_short_time_forms(value, expected):
+    parsed = parse_appointment_time(value)
+    assert parsed is not None
+    assert parsed.strftime("%H:%M") == expected
+
+
+@pytest.mark.parametrize(
+    "value", ["please use 9:30", "9:30 tomorrow", "time=9/30", "9/30/45", "abc9amxyz"]
+)
+def test_time_parser_rejects_partial_or_extra_input(value):
+    assert parse_appointment_time(value) is None
 
 
 @pytest.mark.parametrize(
@@ -447,11 +645,25 @@ def test_sinhala_spoken_time_advances_the_booking_flow():
     assert saved[0]["appointment_time"].strftime("%H:%M") == "16:00"
 
 
-def test_date_limits_and_unambiguous_format_still_apply():
+def test_date_limits_and_invalid_calendar_dates_still_apply():
     assert parse_appointment_date((date.today() - timedelta(days=1)).isoformat()) is None
     assert parse_appointment_date((date.today() + timedelta(days=366)).isoformat()) is None
-    assert parse_appointment_date("09/10/2026") is None
     assert parse_appointment_date("2026-02-30") is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "book 2026/09/23 please",
+        "2026/09/23 at 9",
+        "09/23/26",
+        "2026/13/23",
+        "32/09/2026",
+    ],
+)
+def test_date_parser_rejects_partial_ambiguous_or_invalid_input(value):
+    reference = date(2026, 9, 8)
+    assert parse_appointment_date(value, reference_date=reference) is None
 
 
 def test_same_day_past_time_is_rejected_using_backend_wall_clock():

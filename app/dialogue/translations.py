@@ -28,12 +28,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "cardiology, dermatology, pediatrics, or dental?"
             ),
             "ask_date": (
-                "What date would you like? You can say September 23, type 9/23, "
-                "or use a full date such as 2026-09-23."
+                "What date would you like? You can say September 23, type 9/23 or "
+                "23/9, or use a full date such as 2026/09/23."
             ),
             "ask_time": (
                 "What time would you like between 08:00 and 17:00? You can say 9 AM "
-                "or 9:30 AM, or use 24-hour time such as 14:30."
+                "or 9:30 AM, or type 9/30 or 14:30."
             ),
             "confirm": (
                 "Please confirm: {name}, {specialty}, on {date} at {time}. Say yes to "
@@ -48,11 +48,11 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "between 08:00 and 17:00."
             ),
             "invalid_date": (
-                "I could not validate that date. Try September 23, 9/23, or a full "
-                "date such as 2026-09-23, within the next 365 days."
+                "I could not validate that date. Try September 23, 9/23, 23/9, or "
+                "2026/09/23 within the next 365 days."
             ),
             "invalid_time": (
-                "I could not validate that time. Try 9 AM, 9:30 AM, or 14:30, and "
+                "I could not validate that time. Try 9 AM, 9:30 AM, 9/30, or 14:30, and "
                 "choose a future time between 08:00 and 17:00."
             ),
             "not_yes_no": "Please say yes to book, or no to choose another time.",
@@ -90,7 +90,8 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "ඔබට අවශ්‍ය සායනය හෝ විශේෂඥ අංශය කුමක්ද? උදාහරණයක් ලෙස සාමාන්‍ය වෛද්‍ය, හෘද, සම, ළමා හෝ දන්ත."
             ),
             "ask_date": (
-                "ඔබට අවශ්‍ය දිනය කුමක්ද? කරුණාකර 2026-09-10 වැනි වසර-මාසය-දිනය ආකාරයෙන් කියන්න හෝ ටයිප් කරන්න."
+                "ඔබට අවශ්‍ය දිනය කුමක්ද? සැප්තැම්බර් 23, 23/09 හෝ "
+                "2026/09/23 ලෙස කියන්න හෝ ටයිප් කරන්න."
             ),
             "ask_time": (
                 "08:00 සිට 17:00 අතර ඔබට අවශ්‍ය වේලාව කුමක්ද? 10:30, පෙරවරුව 11 "
@@ -105,7 +106,8 @@ LANGUAGES: dict[str, LanguageConfig] = {
             ),
             "slot_taken": "එම වේලාව මේ ආදර්ශයේ දැනටමත් වෙන් කර ඇත. කරුණාකර වෙනත් වේලාවක් තෝරන්න.",
             "invalid_date": (
-                "එම දිනය තහවුරු කළ නොහැකි විය. කරුණාකර 2026-09-10 වැනි වසර-මාසය-දිනය ආකාරය භාවිතා කරන්න."
+                "එම දිනය තහවුරු කළ නොහැකි විය. සැප්තැම්බර් 23, 23/09 හෝ "
+                "2026/09/23 වැනි ආකාරයක් භාවිතා කරන්න."
             ),
             "invalid_time": (
                 "එම වේලාව තහවුරු කළ නොහැකි විය. 08:00 සිට 17:00 අතර 10:30, "
@@ -142,12 +144,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "மருத்துவம்."
             ),
             "ask_date": (
-                "எந்த தேதியை விரும்புகிறீர்கள்? 2026-09-10 போன்ற ஆண்டு-மாதம்-நாள் "
-                "வடிவில் சொல்லவும் அல்லது தட்டச்சு செய்யவும்."
+                "எந்த தேதியை விரும்புகிறீர்கள்? செப்டம்பர் 23, 23/09 அல்லது "
+                "2026/09/23 என்று சொல்லவும் அல்லது தட்டச்சு செய்யவும்."
             ),
             "ask_time": (
-                "08:00 முதல் 17:00 வரை எந்த நேரம் வேண்டும்? 10:30 போன்ற மணி:நிமிடம் "
-                "வடிவில் சொல்லவும் அல்லது தட்டச்சு செய்யவும்."
+                "08:00 முதல் 17:00 வரை எந்த நேரம் வேண்டும்? காலை ஒன்பது, "
+                "மாலை நான்கு அல்லது 10:30 என்று சொல்லவும் அல்லது தட்டச்சு செய்யவும்."
             ),
             "confirm": (
                 "உறுதிப்படுத்தவும்: {name}, {specialty}, {date} அன்று {time}. பதிவு "
@@ -161,11 +163,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "அந்த நேரம் இந்த டெமோவில் ஏற்கனவே பதிவு செய்யப்பட்டுள்ளது. வேறு நேரத்தைத் தேர்ந்தெடுக்கவும்."
             ),
             "invalid_date": (
-                "அந்த தேதியை சரிபார்க்க முடியவில்லை. 2026-09-10 போன்ற ஆண்டு-மாதம்-நாள் வடிவைப் பயன்படுத்தவும்."
+                "அந்த தேதியை சரிபார்க்க முடியவில்லை. செப்டம்பர் 23, 23/09 அல்லது "
+                "2026/09/23 போன்ற வடிவைப் பயன்படுத்தவும்."
             ),
             "invalid_time": (
-                "அந்த நேரத்தை சரிபார்க்க முடியவில்லை. 08:00 முதல் 17:00 வரை 10:30 "
-                "போன்ற 24 மணி வடிவைப் பயன்படுத்தவும்."
+                "அந்த நேரத்தை சரிபார்க்க முடியவில்லை. 08:00 முதல் 17:00 வரை காலை "
+                "ஒன்பது, மாலை நான்கு அல்லது 10:30 போன்ற வடிவைப் பயன்படுத்தவும்."
             ),
             "not_yes_no": "பதிவு செய்ய ஆம் அல்லது வேறு நேரம் தேர்ந்தெடுக்க இல்லை என்று சொல்லவும்.",
             "cancelled": "பதிவு உரையாடல் ரத்து செய்யப்பட்டது. எந்த நேரமும் உருவாக்கப்படவில்லை.",
@@ -195,10 +198,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "कार्डियोलॉजी, त्वचा, बाल रोग या दंत चिकित्सा?"
             ),
             "ask_date": (
-                "आप किस तारीख को आना चाहते हैं? कृपया 2026-09-10 जैसे वर्ष-महीना-दिन प्रारूप में बोलें या लिखें।"
+                "आप किस तारीख को आना चाहते हैं? 23 सितंबर, 23/09 या "
+                "2026/09/23 बोलें या लिखें।"
             ),
             "ask_time": (
-                "08:00 से 17:00 के बीच कौन सा समय चाहिए? कृपया 10:30 जैसे घंटा:मिनट प्रारूप में बोलें या लिखें।"
+                "08:00 से 17:00 के बीच कौन सा समय चाहिए? सुबह नौ बजे, शाम चार "
+                "बजे या 10:30 बोलें या लिखें।"
             ),
             "confirm": (
                 "कृपया पुष्टि करें: {name}, {specialty}, {date} को {time}. बुक करने के "
@@ -210,9 +215,13 @@ LANGUAGES: dict[str, LanguageConfig] = {
             ),
             "slot_taken": "वह समय इस डेमो में पहले से बुक है। कृपया दूसरा समय चुनें।",
             "invalid_date": (
-                "तारीख मान्य नहीं हुई। कृपया 2026-09-10 जैसा वर्ष-महीना-दिन प्रारूप इस्तेमाल करें।"
+                "तारीख मान्य नहीं हुई। 23 सितंबर, 23/09 या 2026/09/23 जैसा "
+                "प्रारूप इस्तेमाल करें।"
             ),
-            "invalid_time": ("समय मान्य नहीं हुआ। कृपया 08:00 से 17:00 के बीच 10:30 जैसा 24-घंटे का समय दें।"),
+            "invalid_time": (
+                "समय मान्य नहीं हुआ। 08:00 से 17:00 के बीच सुबह नौ बजे, शाम "
+                "चार बजे या 10:30 जैसा समय दें।"
+            ),
             "not_yes_no": "बुक करने के लिए हाँ या दूसरा समय चुनने के लिए नहीं कहें।",
             "cancelled": "बुकिंग बातचीत रद्द कर दी गई है। कोई अपॉइंटमेंट नहीं बनाया गया।",
             "transfer": "मैं स्वचालित बुकिंग रोककर रिसेप्शनिस्ट सहायता का अनुरोध दर्ज कर रहा हूँ।",
@@ -244,11 +253,11 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "cardiología, dermatología, pediatría o dental?"
             ),
             "ask_date": (
-                "¿Qué fecha desea? Dígala o escríbala como año-mes-día, por ejemplo 2026-09-10."
+                "¿Qué fecha desea? Diga o escriba 23 de septiembre, 23/09 o 2026/09/23."
             ),
             "ask_time": (
-                "¿Qué hora desea entre 08:00 y 17:00? Dígala o escríbala como "
-                "hora:minuto, por ejemplo 10:30."
+                "¿Qué hora desea entre 08:00 y 17:00? Diga las nueve de la mañana, "
+                "las cuatro de la tarde o 10:30."
             ),
             "confirm": (
                 "Confirme: {name}, {specialty}, el {date} a las {time}. Diga sí para "
@@ -260,11 +269,11 @@ LANGUAGES: dict[str, LanguageConfig] = {
             ),
             "slot_taken": "Esa hora ya está reservada en la demostración. Elija otra hora.",
             "invalid_date": (
-                "No pude validar la fecha. Use el formato año-mes-día, por ejemplo 2026-09-10."
+                "No pude validar la fecha. Use 23 de septiembre, 23/09 o 2026/09/23."
             ),
             "invalid_time": (
-                "No pude validar la hora. Use formato de 24 horas entre 08:00 y 17:00, "
-                "por ejemplo 10:30."
+                "No pude validar la hora. Use las nueve de la mañana, las cuatro "
+                "de la tarde o 10:30, entre 08:00 y 17:00."
             ),
             "not_yes_no": "Diga sí para reservar o no para elegir otra hora.",
             "cancelled": "La conversación de reserva se canceló. No se creó ninguna cita.",
@@ -302,12 +311,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "médecine générale, cardiologie, dermatologie, pédiatrie ou dentaire ?"
             ),
             "ask_date": (
-                "Quelle date souhaitez-vous ? Dites-la ou saisissez-la au format "
-                "année-mois-jour, par exemple 2026-09-10."
+                "Quelle date souhaitez-vous ? Dites ou saisissez le 23 septembre, "
+                "23/09 ou 2026/09/23."
             ),
             "ask_time": (
-                "Quelle heure souhaitez-vous entre 08:00 et 17:00 ? Dites-la ou "
-                "saisissez-la comme 10:30."
+                "Quelle heure souhaitez-vous entre 08:00 et 17:00 ? Dites neuf "
+                "heures du matin, quatre heures de l'après-midi ou 10:30."
             ),
             "confirm": (
                 "Veuillez confirmer : {name}, {specialty}, le {date} à {time}. Dites "
@@ -319,12 +328,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
             ),
             "slot_taken": "Cette heure est déjà réservée dans la démo. Choisissez une autre heure.",
             "invalid_date": (
-                "Je n'ai pas pu valider cette date. Utilisez le format "
-                "année-mois-jour, par exemple 2026-09-10."
+                "Je n'ai pas pu valider cette date. Utilisez le 23 septembre, "
+                "23/09 ou 2026/09/23."
             ),
             "invalid_time": (
-                "Je n'ai pas pu valider cette heure. Utilisez le format 24 heures "
-                "entre 08:00 et 17:00, par exemple 10:30."
+                "Je n'ai pas pu valider cette heure. Utilisez neuf heures du matin, "
+                "quatre heures de l'après-midi ou 10:30, entre 08:00 et 17:00."
             ),
             "not_yes_no": "Dites oui pour réserver ou non pour choisir une autre heure.",
             "cancelled": (
@@ -366,12 +375,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "Zahnmedizin?"
             ),
             "ask_date": (
-                "Welches Datum möchten Sie? Bitte als Jahr-Monat-Tag sagen oder "
-                "eingeben, zum Beispiel 2026-09-10."
+                "Welches Datum möchten Sie? Sagen oder geben Sie 23. September, "
+                "23.09 oder 2026/09/23 ein."
             ),
             "ask_time": (
-                "Welche Uhrzeit möchten Sie zwischen 08:00 und 17:00? Bitte als "
-                "Stunde:Minute sagen oder eingeben, zum Beispiel 10:30."
+                "Welche Uhrzeit möchten Sie zwischen 08:00 und 17:00? Sagen Sie "
+                "neun Uhr morgens, vier Uhr nachmittags oder 10:30."
             ),
             "confirm": (
                 "Bitte bestätigen: {name}, {specialty}, am {date} um {time}. Sagen Sie "
@@ -386,12 +395,12 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "andere Uhrzeit."
             ),
             "invalid_date": (
-                "Das Datum konnte nicht validiert werden. Verwenden Sie "
-                "Jahr-Monat-Tag, zum Beispiel 2026-09-10."
+                "Das Datum konnte nicht validiert werden. Verwenden Sie 23. September, "
+                "23.09 oder 2026/09/23."
             ),
             "invalid_time": (
-                "Die Uhrzeit konnte nicht validiert werden. Verwenden Sie das "
-                "24-Stunden-Format zwischen 08:00 und 17:00, zum Beispiel 10:30."
+                "Die Uhrzeit konnte nicht validiert werden. Verwenden Sie neun Uhr "
+                "morgens, vier Uhr nachmittags oder 10:30 zwischen 08:00 und 17:00."
             ),
             "not_yes_no": "Sagen Sie ja zum Buchen oder nein, um eine andere Uhrzeit zu wählen.",
             "cancelled": "Die Buchung wurde abgebrochen. Es wurde kein Termin erstellt.",
@@ -426,8 +435,11 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "ما العيادة أو التخصص المطلوب، مثل الطب العام أو القلب أو الجلدية أو "
                 "الأطفال أو الأسنان؟"
             ),
-            "ask_date": "ما التاريخ المطلوب؟ قل أو اكتب التاريخ بصيغة سنة-شهر-يوم، مثل 2026-09-10.",
-            "ask_time": "ما الوقت المطلوب بين 08:00 و17:00؟ قل أو اكتب الوقت مثل 10:30.",
+            "ask_date": "ما التاريخ المطلوب؟ قل أو اكتب ٢٣ سبتمبر أو 23/09 أو 2026/09/23.",
+            "ask_time": (
+                "ما الوقت المطلوب بين 08:00 و17:00؟ قل الساعة التاسعة صباحًا أو "
+                "الرابعة مساءً أو اكتب 10:30."
+            ),
             "confirm": (
                 "يرجى التأكيد: {name}، {specialty}، بتاريخ {date} الساعة {time}. قل "
                 "نعم للحجز أو لا لتغيير الوقت."
@@ -436,8 +448,11 @@ LANGUAGES: dict[str, LanguageConfig] = {
                 "تم حجز موعد العرض التجريبي. رمز التأكيد {code}. هذا العرض غير متصل بمستشفى حقيقي."
             ),
             "slot_taken": "هذا الوقت محجوز بالفعل في العرض التجريبي. اختر وقتًا آخر.",
-            "invalid_date": "تعذر التحقق من التاريخ. استخدم صيغة سنة-شهر-يوم مثل 2026-09-10.",
-            "invalid_time": "تعذر التحقق من الوقت. استخدم نظام 24 ساعة بين 08:00 و17:00 مثل 10:30.",
+            "invalid_date": "تعذر التحقق من التاريخ. استخدم ٢٣ سبتمبر أو 23/09 أو 2026/09/23.",
+            "invalid_time": (
+                "تعذر التحقق من الوقت. استخدم الساعة التاسعة صباحًا أو الرابعة "
+                "مساءً أو 10:30 بين 08:00 و17:00."
+            ),
             "not_yes_no": "قل نعم للحجز أو لا لاختيار وقت آخر.",
             "cancelled": "تم إلغاء محادثة الحجز ولم يتم إنشاء موعد.",
             "transfer": "سأوقف الحجز الآلي وأضع علامة لطلب مساعدة موظف الاستقبال.",
@@ -462,18 +477,20 @@ LANGUAGES: dict[str, LanguageConfig] = {
             "greeting": "您好。我只能帮助预约门诊。请问患者姓名是什么？",
             "ask_name": "请问患者姓名是什么？",
             "ask_specialty": "您需要哪个科室，例如全科、心脏科、皮肤科、儿科或牙科？",
-            "ask_date": "您想预约哪一天？请按年-月-日说出或输入，例如 2026-09-10。",
+            "ask_date": "您想预约哪一天？可以说9月23日，或输入9/23、2026/09/23。",
             "ask_time": (
-                "您想预约 08:00 到 17:00 之间的什么时间？请按小时:分钟说出或输入，例如 10:30。"
+                "您想预约 08:00 到 17:00 之间的什么时间？可以说上午九点、"
+                "下午四点，或输入10:30。"
             ),
             "confirm": (
                 "请确认：{name}，{specialty}，{date} {time}。说“是”进行预约，说“否”更改时间。"
             ),
             "booked": "您的演示预约已创建。确认码 {code}。此演示未连接真实医院。",
             "slot_taken": "该时间在演示中已被预约。请选择其他时间。",
-            "invalid_date": "无法验证该日期。请使用年-月-日格式，例如 2026-09-10。",
+            "invalid_date": "无法验证该日期。请使用9月23日、9/23或2026/09/23等格式。",
             "invalid_time": (
-                "无法验证该时间。请使用 08:00 到 17:00 之间的 24 小时格式，例如 10:30。"
+                "无法验证该时间。请使用上午九点、下午四点或10:30等格式，"
+                "时间须在08:00到17:00之间。"
             ),
             "not_yes_no": "请说“是”进行预约，或说“否”选择其他时间。",
             "cancelled": "预约对话已取消，没有创建预约。",
@@ -503,10 +520,13 @@ LANGUAGES: dict[str, LanguageConfig] = {
             "ask_specialty": (
                 "希望する診療科を教えてください。例：一般内科、循環器科、皮膚科、小児科、歯科。"
             ),
-            "ask_date": "希望日はいつですか。2026-09-10 のように年-月-日で話すか入力してください。",
+            "ask_date": (
+                "希望日はいつですか。9月23日と言うか、9/23または"
+                "2026/09/23と入力してください。"
+            ),
             "ask_time": (
-                "08:00 から 17:00 の間で希望時間を教えてください。10:30 "
-                "のように時:分で話すか入力してください。"
+                "08:00から17:00の間で希望時間を教えてください。午前九時、"
+                "午後四時、または10:30と言うか入力してください。"
             ),
             "confirm": (
                 "確認します。{name}、{specialty}、{date} の "
@@ -519,11 +539,11 @@ LANGUAGES: dict[str, LanguageConfig] = {
             ),
             "slot_taken": "その時間はデモですでに予約されています。別の時間を選んでください。",
             "invalid_date": (
-                "日付を確認できませんでした。2026-09-10 のような年-月-日形式を使ってください。"
+                "日付を確認できませんでした。9月23日、9/23、または2026/09/23のような形式を使ってください。"
             ),
             "invalid_time": (
-                "時間を確認できませんでした。08:00 から 17:00 の間で、10:30 "
-                "のような24時間形式を使ってください。"
+                "時間を確認できませんでした。08:00から17:00の間で、午前九時、"
+                "午後四時、または10:30のような形式を使ってください。"
             ),
             "not_yes_no": (
                 "予約する場合は「はい」、別の時間を選ぶ場合は「いいえ」と言ってください。"

@@ -23,8 +23,9 @@ SQLite.
   browser/system voice is the fallback once a locale is known.
 - Every assistant message has a **Listen** button. Prepared audio is preserved when browser
   autoplay is blocked.
-- The booking parser accepts localized digits and month names, ISO dates, `September 23`,
-  locale-ordered short dates such as `9/23`, and common 12-hour or 24-hour times.
+- The booking parser accepts localized digits and month names, spoken dates such as
+  `September 23`, year-first or year-last full dates, locale-ordered short dates such as `9/23`
+  and `23/09`, and common spoken, 12-hour, or 24-hour times.
 - The speaking-practice result compares the recognized transcript with a sample. It does not
   train a model, fine-tune a voice, or grade pronunciation.
 - Input validation, request limits, rate limits, same-origin checks, security headers, model hash
@@ -295,10 +296,13 @@ Set it for the clinic before using yearless dates or same-day time validation.
    the utterance, and Careline sends the exact returned transcript as the next message.
 3. Check the displayed transcript and selected language before continuing.
 4. Provide a fictional patient name and a clinic/specialty.
-5. Give a date within the next 365 days in `YYYY-MM-DD` format, or use a yearless date such as
-   `September 23` or `9/23`.
-6. Give a time between `08:00` and `17:00`, such as `09:30`, `9:30 AM`, or `5 PM`. Sinhala also
-   accepts spoken forms such as `පෙරවරුව 11` and `පස්වරු හතර`.
+5. Give a date within the next 365 days. Supported examples include `September 23`, `9/23`,
+   `23/09`, `2026/09/23`, and locale-specific month and day words. Ambiguous numeric dates follow
+   the selected language: English, Chinese, and Japanese use month/day; the other seven use
+   day/month.
+6. Give a time between `08:00` and `17:00`. Supported examples include `9`, `09:30`, `9:30 AM`,
+   `9/30`, `9-30`, and `5 PM`, plus localized spoken hours and common minute phrases such as
+   Sinhala `පෙරවරුව 11` and `පස්වරු හතර`.
 7. Review the displayed values and answer with the localized yes/no phrase.
 
 Yearless dates resolve to the next valid occurrence within 365 days using the configured clinic

@@ -5,7 +5,11 @@ const languageSelect = $("languageSelect");
 const textInput = $("textInput");
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const LOCAL_TTS_LOCALES = new Set(["si-LK", "ta-LK", "ar-SA"]);
+const UNSPACED_TRANSCRIPT_LOCALES = new Set(["zh-CN", "ja-JP"]);
 const DEFAULT_LOCALE = "en-US";
+const UTTERANCE_SILENCE_MS = 2000;
+const RECOGNITION_END_GRACE_MS = 1000;
+const RECOGNITION_SAFETY_MS = 45000;
 const bookingSteps = ["patient_name", "specialty", "appointment_date", "appointment_time", "confirm"];
 
 let config = {
@@ -551,8 +555,8 @@ function progress(step, result = "active") {
   textInput.placeholder = {
     patient_name: "Type a demo patient name…",
     specialty: "Choose or type a specialty…",
-    appointment_date: "September 23, 9/23, or YYYY-MM-DD",
-    appointment_time: "9 AM, 9:30 AM, or 14:30",
+    appointment_date: "September 23, 9/23, 23/9, or 2026/9/23",
+    appointment_time: "9 AM, 9:30, 9/30, 9-30, or 14:30",
     confirm: "Confirm or choose another time…",
   }[step] || "Type your reply…";
   controls();
@@ -662,7 +666,9 @@ async function sendMessage(text) {
 }
 
 function releaseCapture(active) {
-  clearTimeout(active.timeout);
+  clearTimeout(active.safetyTimeout);
+  clearTimeout(active.silenceTimeout);
+  clearTimeout(active.endTimeout);
   if (capture === active) {
     capture = null;
     controls();
@@ -715,26 +721,92 @@ async function receiveTranscript(text, active) {
   textInput.value = value;
   await sendMessage(value);
 }
+function completeTranscript(active) {
+  const chunks = [...active.finalResults.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, text]) => text.trim())
+    .filter(Boolean);
+  const unspaced = UNSPACED_TRANSCRIPT_LOCALES.has(active.locale);
+  return chunks.reduce((transcript, chunk) => {
+    if (!transcript || unspaced || /^[,.;:!?%)\]}…，。！？、؛،]/u.test(chunk)) {
+      return transcript + chunk;
+    }
+    return transcript + " " + chunk;
+  }, "");
+}
+function submitRecognition(active) {
+  if (active.cancelled || active.submitted || active.version !== version || capture !== active) return;
+  if (active.hasPendingInterim) {
+    active.cancelled = true;
+    releaseCapture(active);
+    status("The browser did not finalize the complete phrase. Select Start listening to try again.", "error");
+    return;
+  }
+  active.submitted = true;
+  const transcript = completeTranscript(active);
+  releaseCapture(active);
+  if (!transcript) {
+    status("No speech received. Select Start listening to try again.");
+    return;
+  }
+  void receiveTranscript(transcript, active);
+}
+function scheduleRecognitionEnd(active) {
+  clearTimeout(active.silenceTimeout);
+  active.silenceTimeout = setTimeout(() => {
+    if (active.cancelled || active.submitted || capture !== active) return;
+    active.endTimeout = setTimeout(() => submitRecognition(active), RECOGNITION_END_GRACE_MS);
+    try {
+      active.recognition.stop();
+    } catch (_error) {
+      submitRecognition(active);
+    }
+  }, UTTERANCE_SILENCE_MS);
+}
 function startBrowserRecognition(active) {
   const recognition = new Recognition();
   active.recognition = recognition;
   recognition.lang = active.locale;
-  recognition.continuous = false;
-  recognition.interimResults = false;
+  recognition.continuous = true;
+  recognition.interimResults = true;
   recognition.maxAlternatives = 1;
   recognition.onstart = () => {
     if (!active.cancelled) status("Listening. Speak now; pause when you’re finished.", "listening");
   };
   recognition.onresult = (event) => {
-    if (active.cancelled || active.received || capture !== active) return;
-    active.received = true;
-    const transcript = Array.from(event.results, (result) => result[0]?.transcript || "")
-      .join(" ");
-    releaseCapture(active);
-    void receiveTranscript(transcript, active);
+    if (active.cancelled || active.submitted || capture !== active) return;
+    const results = Array.from(event.results || []);
+    const hasResultIndex = Number.isInteger(event.resultIndex);
+    const start = hasResultIndex ? Math.max(0, event.resultIndex) : 0;
+    let syntheticIndex = active.syntheticResultIndex;
+    let finalizedSpeech = false;
+    let hasInterimSpeech = false;
+    for (let index = start; index < results.length; index += 1) {
+      const result = results[index];
+      const transcript = String(result?.[0]?.transcript || "").trim();
+      if (!transcript) continue;
+      const exposesFinality = result && "isFinal" in Object(result);
+      if (exposesFinality && !result.isFinal) {
+        hasInterimSpeech = true;
+        continue;
+      }
+      const resultIndex = hasResultIndex || results.length > 1 ? index : syntheticIndex++;
+      active.finalResults.set(resultIndex, transcript);
+      finalizedSpeech = true;
+    }
+    active.syntheticResultIndex = syntheticIndex;
+    if (hasInterimSpeech) {
+      active.hasPendingInterim = true;
+      clearTimeout(active.endTimeout);
+      active.endTimeout = null;
+      scheduleRecognitionEnd(active);
+    } else if (finalizedSpeech) {
+      active.hasPendingInterim = false;
+      scheduleRecognitionEnd(active);
+    }
   };
   recognition.onerror = (event) => {
-    if (active.cancelled || active.received || capture !== active) return;
+    if (active.cancelled || active.submitted || capture !== active) return;
     active.cancelled = true;
     const errors = {
       "not-allowed": "Microphone access was denied. Allow it in browser settings, or type your reply.",
@@ -748,18 +820,16 @@ function startBrowserRecognition(active) {
     releaseCapture(active);
   };
   recognition.onend = () => {
-    if (capture === active) releaseCapture(active);
-    if (!active.cancelled && !active.received && active.version === version) {
-      status("No speech received. Select Start listening to try again.");
-    }
+    if (active.cancelled || active.submitted || active.version !== version || capture !== active) return;
+    submitRecognition(active);
   };
-  active.timeout = setTimeout(() => {
+  active.safetyTimeout = setTimeout(() => {
     if (capture !== active || active.cancelled) return;
     active.cancelled = true;
     recognition.abort();
     releaseCapture(active);
     status("Listening stopped because no result was received. Select Start listening to try again.", "error");
-  }, 45000);
+  }, RECOGNITION_SAFETY_MS);
   recognition.start();
 }
 function startCapture(purpose) {
@@ -776,6 +846,10 @@ function startCapture(purpose) {
     locale: effectiveLocale,
     sample: language()?.sample || "",
     cancelled: false,
+    submitted: false,
+    hasPendingInterim: false,
+    finalResults: new Map(),
+    syntheticResultIndex: 0,
   };
   capture = active;
   controls();
