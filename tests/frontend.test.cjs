@@ -116,12 +116,16 @@ async function app(options = {}) {
   const audios = [];
   const tracks = [];
   const timers = new Map();
+  const timerDelays = new Map();
   const synthesisListeners = new Map();
   const playErrors = [...(options.playErrors || [])];
   class Recognition {
     constructor() { recognitions.push(this); }
     start() { this.onstart?.(); }
-    stop() { this.onend?.(); }
+    stop() {
+      this.stopped = true;
+      if (options.recognitionStopEnds !== false) this.onend?.();
+    }
     abort() { this.aborted = true; }
     results(chunks, {resultIndex = 0, end = false} = {}) {
       const results = chunks.map((chunk) => {
@@ -226,12 +230,16 @@ async function app(options = {}) {
     },
     Audio: FakeAudio,
     URL: {createObjectURL: () => "blob:test", revokeObjectURL() {}},
-    setTimeout(callback) {
+    setTimeout(callback, delay = 0) {
       const id = Symbol("timer");
       timers.set(id, callback);
+      timerDelays.set(id, delay);
       return id;
     },
-    clearTimeout(id) { timers.delete(id); },
+    clearTimeout(id) {
+      timers.delete(id);
+      timerDelays.delete(id);
+    },
     async fetch(url, requestOptions = {}) {
       calls.push({url, options: requestOptions});
       const custom = options.fetch?.(url, requestOptions, calls);
@@ -271,7 +279,8 @@ async function app(options = {}) {
   vm.runInContext(source, context, {filename: "app/static/app.js"});
   await settle();
   return {
-    element, calls, recognitions, recorders, spoken, audios, timers, tracks, document, synthesis,
+    element, calls, recognitions, recorders, spoken, audios, timers, timerDelays, tracks,
+    document, synthesis,
     run: (code) => vm.runInContext(code, context),
     text: () => element("conversation").children.map((item) => item.children.at(-1).textContent),
     messageLocales: () => element("conversation").children.map((item) => item.children.at(-1).lang),
@@ -364,6 +373,7 @@ test("one Start listening click recognizes and displays the exact final words", 
   ui.recognitions[0].result(transcript, {isFinal: true, end: false});
   await settle();
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+  assert.equal(ui.element("textInput").value, transcript);
   assert.equal(ui.element("listenButtonLabel").textContent, "Listening\u2026");
 
   ui.recognitions[0].end();
@@ -420,29 +430,33 @@ test("recognition buffers multiple final chunks and submits the complete utteran
   ]);
 });
 
-test("interim speech is never submitted as a half answer", async () => {
+test("an English name is displayed only when complete and submitted exactly once", async () => {
   const ui = await app({autoSpeak: false});
   await ui.element("listenButton").emit("click");
   const recognition = ui.recognitions[0];
 
-  recognition.result("twenty", {isFinal: false, end: false, resultIndex: 0});
+  recognition.result("Hem", {isFinal: false, end: false, resultIndex: 0});
   await settle();
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+  assert.equal(ui.element("textInput").value, "");
   assert.equal(ui.timers.size, 2);
+  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [1800, 45000]);
 
-  recognition.result("twenty third of September", {isFinal: true, end: false, resultIndex: 0});
+  recognition.result("Hemal Fernando", {isFinal: true, end: false, resultIndex: 0});
   await settle();
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+  assert.equal(ui.element("textInput").value, "Hemal Fernando");
   assert.equal(ui.timers.size, 2);
+  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [1200, 45000]);
 
   recognition.end();
   await settle(8);
   const messages = ui.calls.filter((call) => call.url === "/api/messages");
   assert.equal(messages.length, 1);
-  assert.equal(JSON.parse(messages[0].options.body).text, "twenty third of September");
+  assert.equal(JSON.parse(messages[0].options.body).text, "Hemal Fernando");
 });
 
-test("interim continuation refreshes the silence deadline until the phrase is final", async () => {
+test("interim continuation cancels completion until the phrase is final", async () => {
   const ui = await app({autoSpeak: false});
   await ui.element("listenButton").emit("click");
   const recognition = ui.recognitions[0];
@@ -456,13 +470,16 @@ test("interim continuation refreshes the silence deadline until the phrase is fi
     {text: "twenty", isFinal: false},
   ], {resultIndex: 1});
   await settle();
+  assert.equal(ui.element("textInput").value, "");
   assert.equal(ui.timers.size, 2);
+  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [1800, 45000]);
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
 
   recognition.results([
     {text: "September", isFinal: true},
     {text: "twenty third", isFinal: true},
   ], {resultIndex: 1});
+  assert.equal(ui.element("textInput").value, "September twenty third");
   recognition.end();
   await settle(8);
 
@@ -481,12 +498,16 @@ test("stalled interim recognition stops without submitting an earlier fragment",
     {text: "September", isFinal: true},
     {text: "twenty", isFinal: false},
   ], {resultIndex: 1});
-  const silenceTimeout = [...ui.timers.values()].at(-1);
-  silenceTimeout();
+  assert.equal(ui.element("textInput").value, "");
+  assert.equal(ui.timers.size, 2);
+  const [interimTimerId] = [...ui.timerDelays.entries()]
+    .find(([, delay]) => delay === 1800);
+  ui.timers.get(interimTimerId)();
   await settle(8);
 
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
   assert.equal(ui.run("capture"), null);
+  assert.equal(recognition.stopped, true);
   assert.match(ui.element("statusLine").textContent, /did not finalize the complete phrase/);
 });
 
@@ -537,8 +558,9 @@ test("a natural-silence grace period completes an utterance when the browser sta
 
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
   assert.equal(ui.timers.size, 2);
-  const silenceTimeout = [...ui.timers.values()].at(-1);
-  silenceTimeout();
+  const [silenceTimerId] = [...ui.timerDelays.entries()]
+    .find(([, delay]) => delay === 1200);
+  ui.timers.get(silenceTimerId)();
   await settle(8);
 
   const messages = ui.calls.filter((call) => call.url === "/api/messages");
@@ -546,6 +568,41 @@ test("a natural-silence grace period completes an utterance when the browser sta
   assert.equal(JSON.parse(messages[0].options.body).text, "September twenty third");
   assert.equal(ui.run("capture"), null);
   assert.equal(ui.timers.size, 0);
+});
+
+test("late final chunks after stop reset the grace period and submit the complete name", async () => {
+  const ui = await app({autoSpeak: false, recognitionStopEnds: false});
+  await ui.element("listenButton").emit("click");
+  const recognition = ui.recognitions[0];
+
+  recognition.result("Hemal", {isFinal: true, end: false, resultIndex: 0});
+  const [silenceTimerId] = [...ui.timerDelays.entries()]
+    .find(([, delay]) => delay === 1200);
+  ui.timers.get(silenceTimerId)();
+  assert.equal(recognition.stopped, true);
+  assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+
+  const [firstGraceTimerId] = [...ui.timerDelays.entries()]
+    .find(([, delay]) => delay === 1000);
+  recognition.result("Hemal Fernando", {isFinal: true, end: false, resultIndex: 0});
+  assert.equal(ui.timers.has(firstGraceTimerId), false);
+  assert.equal(ui.element("textInput").value, "Hemal Fernando");
+
+  const [secondGraceTimerId] = [...ui.timerDelays.entries()]
+    .find(([, delay]) => delay === 1000);
+  recognition.results([
+    {text: "Hemal Fernando", isFinal: true},
+    {text: "Perera", isFinal: true},
+  ], {resultIndex: 1});
+  assert.equal(ui.timers.has(secondGraceTimerId), false);
+  assert.equal(ui.element("textInput").value, "Hemal Fernando Perera");
+  assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+
+  recognition.end();
+  await settle(8);
+  const messages = ui.calls.filter((call) => call.url === "/api/messages");
+  assert.equal(messages.length, 1);
+  assert.equal(JSON.parse(messages[0].options.body).text, "Hemal Fernando Perera");
 });
 
 test("Start listening interrupts active assistant playback before recognition", async () => {
@@ -567,7 +624,11 @@ test("browser recognition and booking messages keep all ten selected locales", a
     assert.equal(ui.recognitions.length, 1, locale);
     assert.equal(ui.recognitions[0].lang, locale, locale);
     assert.equal(ui.recorders.length, 0, locale);
-    ui.recognitions[0].result("Localized patient reply");
+    ui.recognitions[0].result("Localized", {isFinal: false, end: false, resultIndex: 0});
+    assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0, locale);
+    ui.recognitions[0].result("Localized patient reply", {isFinal: true, end: false, resultIndex: 0});
+    assert.equal(ui.element("textInput").value, "Localized patient reply", locale);
+    ui.recognitions[0].end();
     await settle(8);
 
     const message = ui.calls.find((call) => call.url === "/api/messages");
@@ -1076,6 +1137,23 @@ test("a recognition error restores the one-click listening control", async () =>
   assert.match(ui.element("statusLine").textContent, /No speech was detected/i);
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
   assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
+});
+
+test("a no-speech event after a final English name submits the buffered words", async () => {
+  const ui = await app({autoSpeak: false});
+  await ui.element("listenButton").emit("click");
+  const recognition = ui.recognitions[0];
+
+  recognition.result("Hemal Fernando", {isFinal: true, end: false, resultIndex: 0});
+  assert.equal(ui.element("textInput").value, "Hemal Fernando");
+  recognition.error("no-speech");
+  await settle(8);
+
+  const messages = ui.calls.filter((call) => call.url === "/api/messages");
+  assert.equal(messages.length, 1);
+  assert.equal(JSON.parse(messages[0].options.body).text, "Hemal Fernando");
+  assert.equal(JSON.parse(messages[0].options.body).language_locale, "en-US");
+  assert.equal(ui.run("capture"), null);
 });
 
 test("a recognition safety timeout restores the one-click listening control", async () => {

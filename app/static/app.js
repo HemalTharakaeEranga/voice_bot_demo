@@ -7,7 +7,8 @@ const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const LOCAL_TTS_LOCALES = new Set(["si-LK", "ta-LK", "ar-SA"]);
 const UNSPACED_TRANSCRIPT_LOCALES = new Set(["zh-CN", "ja-JP"]);
 const DEFAULT_LOCALE = "en-US";
-const UTTERANCE_SILENCE_MS = 2000;
+const FINAL_RESULT_SILENCE_MS = 1200;
+const INTERIM_RESULT_SILENCE_MS = 1800;
 const RECOGNITION_END_GRACE_MS = 1000;
 const RECOGNITION_SAFETY_MS = 45000;
 const bookingSteps = ["patient_name", "specialty", "appointment_date", "appointment_time", "confirm"];
@@ -751,17 +752,22 @@ function submitRecognition(active) {
   }
   void receiveTranscript(transcript, active);
 }
-function scheduleRecognitionEnd(active) {
+function scheduleRecognitionSubmit(active) {
+  clearTimeout(active.endTimeout);
+  active.endTimeout = setTimeout(() => submitRecognition(active), RECOGNITION_END_GRACE_MS);
+}
+function scheduleRecognitionEnd(active, delay = FINAL_RESULT_SILENCE_MS) {
   clearTimeout(active.silenceTimeout);
   active.silenceTimeout = setTimeout(() => {
     if (active.cancelled || active.submitted || capture !== active) return;
-    active.endTimeout = setTimeout(() => submitRecognition(active), RECOGNITION_END_GRACE_MS);
+    active.stopRequested = true;
+    scheduleRecognitionSubmit(active);
     try {
       active.recognition.stop();
     } catch (_error) {
       submitRecognition(active);
     }
-  }, UTTERANCE_SILENCE_MS);
+  }, delay);
 }
 function startBrowserRecognition(active) {
   const recognition = new Recognition();
@@ -799,14 +805,26 @@ function startBrowserRecognition(active) {
       active.hasPendingInterim = true;
       clearTimeout(active.endTimeout);
       active.endTimeout = null;
-      scheduleRecognitionEnd(active);
+      if (active.purpose === "booking" && active.finalResults.size) {
+        textInput.value = "";
+      }
+      if (active.stopRequested) scheduleRecognitionSubmit(active);
+      else scheduleRecognitionEnd(active, INTERIM_RESULT_SILENCE_MS);
     } else if (finalizedSpeech) {
       active.hasPendingInterim = false;
-      scheduleRecognitionEnd(active);
+      if (active.purpose === "booking") {
+        textInput.value = completeTranscript(active);
+      }
+      if (active.stopRequested) scheduleRecognitionSubmit(active);
+      else scheduleRecognitionEnd(active);
     }
   };
   recognition.onerror = (event) => {
     if (active.cancelled || active.submitted || capture !== active) return;
+    if (event.error === "no-speech" && active.finalResults.size && !active.hasPendingInterim) {
+      submitRecognition(active);
+      return;
+    }
     active.cancelled = true;
     const errors = {
       "not-allowed": "Microphone access was denied. Allow it in browser settings, or type your reply.",
@@ -847,6 +865,7 @@ function startCapture(purpose) {
     sample: language()?.sample || "",
     cancelled: false,
     submitted: false,
+    stopRequested: false,
     hasPendingInterim: false,
     finalResults: new Map(),
     syntheticResultIndex: 0,
