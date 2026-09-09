@@ -9,6 +9,8 @@ const UNSPACED_TRANSCRIPT_LOCALES = new Set(["zh-CN", "ja-JP"]);
 const DEFAULT_LOCALE = "en-US";
 const FINAL_RESULT_SILENCE_MS = 1200;
 const INTERIM_RESULT_SILENCE_MS = 1800;
+const PATIENT_NAME_SILENCE_MS = 2200;
+const CONFIRMATION_SILENCE_MS = 650;
 const RECOGNITION_END_GRACE_MS = 1000;
 const RECOGNITION_SAFETY_MS = 45000;
 const bookingSteps = ["patient_name", "specialty", "appointment_date", "appointment_time", "confirm"];
@@ -27,6 +29,7 @@ let busy = false;
 let pending = null;
 let capture = null;
 let effectiveLocale = DEFAULT_LOCALE;
+let currentBookingStep = "patient_name";
 // Reply playback and browser recognition are independent. A TTS provider
 // failure must never disable the microphone for the rest of the page.
 let speechProviderUnavailable = false;
@@ -65,7 +68,7 @@ function resetLanguageContext() {
 function renderVoiceHint(state = document.body.dataset.state) {
   $("voiceHint").textContent = state === "listening"
     ? "Speak now in " + localeLabel(effectiveLocale)
-      + ". Your final words will appear automatically."
+      + ". Your recognized words will appear as you speak."
     : state === "speaking"
       ? "Select Start listening to interrupt and reply."
       : state === "processing"
@@ -499,6 +502,7 @@ function clinicDate() {
   return localDate(parsed) === value ? parsed : new Date();
 }
 function progress(step, result = "active") {
+  currentBookingStep = result === "active" && bookingSteps.includes(step) ? step : null;
   const index = bookingSteps.indexOf(step);
   document.querySelectorAll("#bookingProgress [data-step]").forEach((item) => {
     const position = bookingSteps.indexOf(item.dataset.step);
@@ -722,8 +726,8 @@ async function receiveTranscript(text, active) {
   textInput.value = value;
   await sendMessage(value);
 }
-function completeTranscript(active) {
-  const chunks = [...active.finalResults.entries()]
+function joinedTranscript(active, entries) {
+  const chunks = [...entries]
     .sort(([left], [right]) => left - right)
     .map(([, text]) => text.trim())
     .filter(Boolean);
@@ -735,13 +739,43 @@ function completeTranscript(active) {
     return transcript + " " + chunk;
   }, "");
 }
+function completeTranscript(active) {
+  return joinedTranscript(active, active.finalResults.entries());
+}
+function currentTranscript(active) {
+  const results = new Map(active.finalResults);
+  active.interimResults.forEach((text, index) => results.set(index, text));
+  return joinedTranscript(active, results.entries());
+}
+function normalizeSpokenChoice(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase()
+    .replace(/[\p{P}\p{Z}\p{S}\s]/gu, "");
+}
+function isExactConfirmation(active, transcript) {
+  if (active.purpose !== "booking" || active.bookingStep !== "confirm") return false;
+  const selectedLanguage = languageFor(active.locale);
+  const normalized = normalizeSpokenChoice(transcript);
+  return Boolean(normalized && [...(selectedLanguage?.yes || []), ...(selectedLanguage?.no || [])]
+    .some((choice) => normalizeSpokenChoice(choice) === normalized));
+}
+function finalizeInterimResults(active) {
+  active.interimResults.forEach((text, index) => active.finalResults.set(index, text));
+  active.interimResults.clear();
+  active.hasPendingInterim = false;
+}
 function submitRecognition(active) {
   if (active.cancelled || active.submitted || active.version !== version || capture !== active) return;
   if (active.hasPendingInterim) {
-    active.cancelled = true;
-    releaseCapture(active);
-    status("The browser did not finalize the complete phrase. Select Start listening to try again.", "error");
-    return;
+    const transcript = currentTranscript(active);
+    const recognitionEndedNaturally = !active.stopRequested;
+    if (active.speechEnded || recognitionEndedNaturally || isExactConfirmation(active, transcript)) {
+      finalizeInterimResults(active);
+    } else {
+      active.cancelled = true;
+      releaseCapture(active);
+      status("The browser did not finalize the complete phrase. Select Start listening to try again.", "error");
+      return;
+    }
   }
   active.submitted = true;
   const transcript = completeTranscript(active);
@@ -756,18 +790,37 @@ function scheduleRecognitionSubmit(active) {
   clearTimeout(active.endTimeout);
   active.endTimeout = setTimeout(() => submitRecognition(active), RECOGNITION_END_GRACE_MS);
 }
+function requestRecognitionStop(active, speechEnded = false) {
+  if (active.cancelled || active.submitted || capture !== active) return;
+  active.speechEnded ||= speechEnded;
+  if (active.stopRequested) {
+    scheduleRecognitionSubmit(active);
+    return;
+  }
+  active.stopRequested = true;
+  clearTimeout(active.silenceTimeout);
+  active.silenceTimeout = null;
+  scheduleRecognitionSubmit(active);
+  try {
+    active.recognition.stop();
+  } catch (_error) {
+    submitRecognition(active);
+  }
+}
 function scheduleRecognitionEnd(active, delay = FINAL_RESULT_SILENCE_MS) {
   clearTimeout(active.silenceTimeout);
   active.silenceTimeout = setTimeout(() => {
-    if (active.cancelled || active.submitted || capture !== active) return;
-    active.stopRequested = true;
-    scheduleRecognitionSubmit(active);
-    try {
-      active.recognition.stop();
-    } catch (_error) {
-      submitRecognition(active);
-    }
+    requestRecognitionStop(active);
   }, delay);
+}
+function recognitionSilenceDelay(active, hasInterim) {
+  if (active.purpose === "booking" && active.bookingStep === "confirm") {
+    return CONFIRMATION_SILENCE_MS;
+  }
+  if (active.purpose === "booking" && active.bookingStep === "patient_name") {
+    return PATIENT_NAME_SILENCE_MS;
+  }
+  return hasInterim ? INTERIM_RESULT_SILENCE_MS : FINAL_RESULT_SILENCE_MS;
 }
 function startBrowserRecognition(active) {
   const recognition = new Recognition();
@@ -775,7 +828,7 @@ function startBrowserRecognition(active) {
   recognition.lang = active.locale;
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
+  recognition.maxAlternatives = active.purpose === "booking" && active.bookingStep === "confirm" ? 3 : 1;
   recognition.onstart = () => {
     if (!active.cancelled) status("Listening. Speak now; pause when you’re finished.", "listening");
   };
@@ -789,36 +842,39 @@ function startBrowserRecognition(active) {
     let hasInterimSpeech = false;
     for (let index = start; index < results.length; index += 1) {
       const result = results[index];
-      const transcript = String(result?.[0]?.transcript || "").trim();
+      const alternatives = Array.from(result || [])
+        .map((alternative) => String(alternative?.transcript || "").trim())
+        .filter(Boolean);
+      const transcript = alternatives.find((alternative) => isExactConfirmation(active, alternative))
+        || alternatives[0] || "";
       if (!transcript) continue;
+      const resultIndex = hasResultIndex || results.length > 1 ? index : syntheticIndex++;
       const exposesFinality = result && "isFinal" in Object(result);
       if (exposesFinality && !result.isFinal) {
+        active.interimResults.set(resultIndex, transcript);
         hasInterimSpeech = true;
         continue;
       }
-      const resultIndex = hasResultIndex || results.length > 1 ? index : syntheticIndex++;
+      active.interimResults.delete(resultIndex);
       active.finalResults.set(resultIndex, transcript);
       finalizedSpeech = true;
     }
     active.syntheticResultIndex = syntheticIndex;
-    if (hasInterimSpeech) {
-      active.hasPendingInterim = true;
+    active.hasPendingInterim = active.interimResults.size > 0;
+    if ((hasInterimSpeech || finalizedSpeech) && active.purpose === "booking") {
+      textInput.value = currentTranscript(active);
+    }
+    if (active.hasPendingInterim) {
       clearTimeout(active.endTimeout);
       active.endTimeout = null;
-      if (active.purpose === "booking" && active.finalResults.size) {
-        textInput.value = "";
-      }
       if (active.stopRequested) scheduleRecognitionSubmit(active);
-      else scheduleRecognitionEnd(active, INTERIM_RESULT_SILENCE_MS);
+      else scheduleRecognitionEnd(active, recognitionSilenceDelay(active, true));
     } else if (finalizedSpeech) {
-      active.hasPendingInterim = false;
-      if (active.purpose === "booking") {
-        textInput.value = completeTranscript(active);
-      }
       if (active.stopRequested) scheduleRecognitionSubmit(active);
-      else scheduleRecognitionEnd(active);
+      else scheduleRecognitionEnd(active, recognitionSilenceDelay(active, false));
     }
   };
+  recognition.onspeechend = () => requestRecognitionStop(active, true);
   recognition.onerror = (event) => {
     if (active.cancelled || active.submitted || capture !== active) return;
     if (event.error === "no-speech" && active.finalResults.size && !active.hasPendingInterim) {
@@ -862,12 +918,15 @@ function startCapture(purpose) {
     purpose,
     version,
     locale: effectiveLocale,
+    bookingStep: purpose === "booking" ? currentBookingStep : null,
     sample: language()?.sample || "",
     cancelled: false,
     submitted: false,
     stopRequested: false,
+    speechEnded: false,
     hasPendingInterim: false,
     finalResults: new Map(),
+    interimResults: new Map(),
     syntheticResultIndex: 0,
   };
   capture = active;

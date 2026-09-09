@@ -130,7 +130,8 @@ async function app(options = {}) {
     results(chunks, {resultIndex = 0, end = false} = {}) {
       const results = chunks.map((chunk) => {
         const details = typeof chunk === "string" ? {text: chunk} : chunk;
-        const result = [{transcript: details.text}];
+        const result = [details.text, ...(details.alternatives || [])]
+          .map((transcript) => ({transcript}));
         if (details.isFinal !== undefined) result.isFinal = details.isFinal;
         return result;
       });
@@ -145,6 +146,7 @@ async function app(options = {}) {
       this.results([chunk], eventOptions);
     }
     error(error) { this.onerror?.({error}); }
+    speechEnd() { this.onspeechend?.(); }
     end() { this.onend?.(); }
   }
   class Recorder {
@@ -430,7 +432,7 @@ test("recognition buffers multiple final chunks and submits the complete utteran
   ]);
 });
 
-test("an English name is displayed only when complete and submitted exactly once", async () => {
+test("an English name is previewed immediately and submitted only when complete", async () => {
   const ui = await app({autoSpeak: false});
   await ui.element("listenButton").emit("click");
   const recognition = ui.recognitions[0];
@@ -438,16 +440,16 @@ test("an English name is displayed only when complete and submitted exactly once
   recognition.result("Hem", {isFinal: false, end: false, resultIndex: 0});
   await settle();
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
-  assert.equal(ui.element("textInput").value, "");
+  assert.equal(ui.element("textInput").value, "Hem");
   assert.equal(ui.timers.size, 2);
-  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [1800, 45000]);
+  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [2200, 45000]);
 
   recognition.result("Hemal Fernando", {isFinal: true, end: false, resultIndex: 0});
   await settle();
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
   assert.equal(ui.element("textInput").value, "Hemal Fernando");
   assert.equal(ui.timers.size, 2);
-  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [1200, 45000]);
+  assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [2200, 45000]);
 
   recognition.end();
   await settle(8);
@@ -456,8 +458,54 @@ test("an English name is displayed only when complete and submitted exactly once
   assert.equal(JSON.parse(messages[0].options.body).text, "Hemal Fernando");
 });
 
+test("speech end submits a three-part English name from the browser's latest words", async () => {
+  const ui = await app({autoSpeak: false});
+  await ui.element("listenButton").emit("click");
+  const recognition = ui.recognitions[0];
+
+  for (const transcript of ["Hemal", "Hemal Tharaka", "Hemal Tharaka Eranga"]) {
+    recognition.result(transcript, {isFinal: false, end: false, resultIndex: 0});
+    assert.equal(ui.element("textInput").value, transcript);
+    assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+  }
+
+  recognition.speechEnd();
+  await settle(8);
+  const messages = ui.calls.filter((call) => call.url === "/api/messages");
+  assert.equal(messages.length, 1);
+  assert.equal(JSON.parse(messages[0].options.body).text, "Hemal Tharaka Eranga");
+});
+
+test("short English yes and no answers complete quickly even when marked interim", async () => {
+  const cases = [
+    {first: "Why", alternative: "Yes.", expected: "Yes."},
+    {first: "Now", alternative: "No.", expected: "No."},
+  ];
+  for (const {first, alternative, expected} of cases) {
+    const ui = await app({autoSpeak: false});
+    ui.run('progress("confirm")');
+    await ui.element("listenButton").emit("click");
+    const recognition = ui.recognitions[0];
+    assert.equal(recognition.maxAlternatives, 3);
+
+    recognition.results([
+      {text: first, alternatives: [alternative], isFinal: false},
+    ], {resultIndex: 0});
+    assert.equal(ui.element("textInput").value, expected);
+    const [confirmationTimerId] = [...ui.timerDelays.entries()]
+      .find(([, delay]) => delay === 650);
+    ui.timers.get(confirmationTimerId)();
+    await settle(8);
+
+    const messages = ui.calls.filter((call) => call.url === "/api/messages");
+    assert.equal(messages.length, 1);
+    assert.equal(JSON.parse(messages[0].options.body).text, expected);
+  }
+});
+
 test("interim continuation cancels completion until the phrase is final", async () => {
   const ui = await app({autoSpeak: false});
+  ui.run('progress("appointment_date")');
   await ui.element("listenButton").emit("click");
   const recognition = ui.recognitions[0];
 
@@ -470,7 +518,7 @@ test("interim continuation cancels completion until the phrase is final", async 
     {text: "twenty", isFinal: false},
   ], {resultIndex: 1});
   await settle();
-  assert.equal(ui.element("textInput").value, "");
+  assert.equal(ui.element("textInput").value, "September twenty");
   assert.equal(ui.timers.size, 2);
   assert.deepEqual([...ui.timerDelays.values()].sort((left, right) => left - right), [1800, 45000]);
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
@@ -490,6 +538,7 @@ test("interim continuation cancels completion until the phrase is final", async 
 
 test("stalled interim recognition stops without submitting an earlier fragment", async () => {
   const ui = await app({autoSpeak: false});
+  ui.run('progress("appointment_date")');
   await ui.element("listenButton").emit("click");
   const recognition = ui.recognitions[0];
 
@@ -498,7 +547,7 @@ test("stalled interim recognition stops without submitting an earlier fragment",
     {text: "September", isFinal: true},
     {text: "twenty", isFinal: false},
   ], {resultIndex: 1});
-  assert.equal(ui.element("textInput").value, "");
+  assert.equal(ui.element("textInput").value, "September twenty");
   assert.equal(ui.timers.size, 2);
   const [interimTimerId] = [...ui.timerDelays.entries()]
     .find(([, delay]) => delay === 1800);
@@ -551,6 +600,7 @@ test("Japanese recognition joins final chunks without inserting spaces", async (
 
 test("a natural-silence grace period completes an utterance when the browser stays open", async () => {
   const ui = await app({autoSpeak: false});
+  ui.run('progress("appointment_date")');
   await ui.element("listenButton").emit("click");
   const recognition = ui.recognitions[0];
   recognition.result("September twenty third", {isFinal: true, end: false, resultIndex: 0});
@@ -577,7 +627,7 @@ test("late final chunks after stop reset the grace period and submit the complet
 
   recognition.result("Hemal", {isFinal: true, end: false, resultIndex: 0});
   const [silenceTimerId] = [...ui.timerDelays.entries()]
-    .find(([, delay]) => delay === 1200);
+    .find(([, delay]) => delay === 2200);
   ui.timers.get(silenceTimerId)();
   assert.equal(recognition.stopped, true);
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
