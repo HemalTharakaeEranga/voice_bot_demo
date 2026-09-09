@@ -2,14 +2,17 @@
 
 ## 90-second primary demo
 
-1. Open the demo in Chrome or Edge and leave **Conversation language** on automatic detection.
-2. Select **Start listening** and say a complete phrase such as “My name is Demo Patient.”
-3. Verify the transcript and the detected-language indicator. The language stays fixed for this
-   booking.
+1. Open the demo in Chrome or Edge. English is selected by default; keep it or explicitly choose
+   another conversation language.
+2. Select **Start listening** once and say a complete phrase such as “My name is Demo Patient.” The
+   browser ends recognition after the utterance and Careline sends the exact returned transcript.
+3. Verify the displayed transcript and selected-language indicator. The selected locale stays fixed
+   for this booking.
 4. Say or select a specialty.
 5. Give a future date in `YYYY-MM-DD` format and a time between `08:00` and `17:00`.
 6. Confirm using the localized yes phrase and show the demo confirmation code.
-7. Start a new booking and repeat a short flow in Sinhala or another configured language.
+7. Select Sinhala or another configured language. The change starts a fresh booking; repeat a
+   short flow.
 8. Open **Speaking practice**, select a language, and show the transcript-match result. Explain that
    it checks recognized words and does not train a model or grade pronunciation.
 
@@ -17,21 +20,23 @@ Use fictional details only. The application does not contact a hospital or creat
 
 ## Voice behavior to explain
 
-There is one microphone control. With a configured OpenAI key and available quota, it records a
-short clip, detects one of the ten supported languages, and transcribes it. After detection, later
-clips are pinned to that locale. Sinhala, Tamil, and Arabic replies use the dedicated local Piper
-route. The other seven use OpenAI speech and can fall back to a compatible browser voice. A
-different-language voice is never explicitly substituted.
+There is one microphone control and an explicit ten-language selector. The shipped page uses
+browser `SpeechRecognition` in the selected language, independent of the OpenAI key. Sinhala,
+Tamil, and Arabic replies use the dedicated local Piper route. The other seven use OpenAI speech
+when configured and can fall back to a compatible browser voice. A different-language voice is
+never explicitly substituted.
 
-If OpenAI quota is unavailable before detection, choose a specific language to use browser speech
-recognition. If the language was already detected, browser recognition can continue in that fixed
-language without restarting the booking. Typed input always remains available.
+The OpenAI key enables those seven cloud reply voices and the optional transcription endpoint for
+custom clients; shipped page listening does not call that endpoint. The backend retains
+`language_locale=auto` with a supported `fallback_locale` for custom API clients, but that
+compatibility mode is not shown in the page selector. Typed input always remains available.
 
 ## Interruption and cleanup
 
-Selecting **Start listening** while the assistant speaks stops playback before recording. Select
-the same button again to finish a server recording; it also stops after 30 seconds. **Stop voice**
-discards an active recording and stops playback. Audio is not stored by this application.
+Selecting **Start listening** while the assistant speaks stops playback and begins browser
+recognition. The browser ends after the utterance; there is no timer or second click. Careline does
+not create or upload a recording, although the browser vendor may process microphone audio under
+its own terms.
 
 ## Failure cases to demonstrate
 

@@ -1,20 +1,23 @@
 # Careline Clinic Voicebot Demo
 
-Careline is a multilingual clinic appointment demonstration with one voice control, automatic
-spoken-language detection, localized replies, a guided booking flow, and a separate speaking
-practice area. The interface supports ten configured languages. A deterministic FastAPI state
-machine handles the conversation and stores demo appointments in SQLite.
+Careline is a multilingual clinic appointment demonstration with one voice control, an explicit
+language selector, localized replies, a guided booking flow, and a separate speaking-practice
+area. English is selected by default, and the interface offers ten configured languages. A
+deterministic FastAPI state machine handles the conversation and stores demo appointments in
+SQLite.
 
 > **Demo scope:** use fictional patient details only. This project is not connected to a clinic,
 > does not provide medical advice, and is not a production or regulated healthcare system.
 
 ## Features
 
-- Ten configured locales: English (`en-US`), Sinhala (`si-LK`), Tamil (`ta-LK`), Hindi
+- Ten configured locales, with English selected by default: English (`en-US`), Sinhala (`si-LK`),
+  Tamil (`ta-LK`), Hindi
   (`hi-IN`), Spanish (`es-ES`), French (`fr-FR`), German (`de-DE`), Arabic (`ar-SA`), Simplified
   Chinese (`zh-CN`), and Japanese (`ja-JP`).
-- Automatic OpenAI transcription can identify one supported language from a complete recorded
-  phrase. The resolved language stays fixed for the rest of that booking.
+- The user explicitly selects the conversation language. One **Start listening** click starts
+  browser speech recognition in that locale; the browser ends after the utterance and the exact
+  returned transcript is sent to the booking flow.
 - Local Piper voices read Sinhala, Tamil, and Arabic replies without an OpenAI key or quota.
 - OpenAI text-to-speech reads replies in the other seven languages when configured. A compatible
   browser/system voice is the fallback once a locale is known.
@@ -42,9 +45,10 @@ The page presents one voice experience; users do not choose a provider.
 | `ar-SA` | `POST /api/tts/local` | `ar_JO-kareem-medium` with Piper | WAV |
 | `en-US`, `hi-IN`, `es-ES`, `fr-FR`, `de-DE`, `zh-CN`, `ja-JP` | `POST /api/voice/speak` | OpenAI speech | MP3 |
 
-OpenAI transcription is used for automatic detection across all ten languages. After the locale is
-known, all assistant text, recording hints, browser fallback requests, and booking messages keep
-that locale.
+The shipped page listens through browser `SpeechRecognition` with the language selected on the
+page. Careline does not create or upload an audio recording during this flow, although the browser
+vendor may process microphone audio under its own terms. Assistant text, recognition requests,
+reply playback, and booking messages keep the selected locale.
 
 `POST /api/voice/speak` still accepts the three local locales for compatibility with older clients
 and routes them to Piper before checking for an OpenAI key. Current browser code uses the explicit
@@ -60,7 +64,7 @@ Arabic locale (`ar-SA`). Regional pronunciation can differ.
 | Area | Technology |
 | --- | --- |
 | Frontend | Semantic HTML, responsive CSS, vanilla JavaScript |
-| Browser audio | MediaRecorder, Web Speech API, Blob/Object URL, and `Audio` |
+| Browser audio | Web Speech API, Blob/Object URL, and `Audio` |
 | API server | Python 3.12, FastAPI, Uvicorn, Pydantic, Pydantic Settings |
 | Cloud audio | OpenAI Audio APIs called from the server through HTTPX |
 | Local speech | Piper TTS 1.8.0, ONNX Runtime, pinned ONNX voice models |
@@ -101,7 +105,8 @@ docs/                    # architecture, security, voice, and demo notes
 - Chrome or Edge for microphone testing
 - Node.js 24 only for frontend tests
 - Docker Desktop or another Docker engine only for container use
-- An OpenAI API project and quota only for automatic transcription and the seven cloud voices
+- An OpenAI API project and quota only for the optional custom-client transcription endpoint and
+  the seven cloud voices
 
 No Hugging Face account, API key, or runtime connection is required. The three public voice models
 and their JSON configuration files are downloaded once and then loaded locally.
@@ -215,9 +220,10 @@ Open <http://127.0.0.1:8000>. Use `curl http://127.0.0.1:8000/health` for a heal
 
 ## Connect an OpenAI API key
 
-The OpenAI API key enables automatic transcription for all ten languages and generated reply
-speech for the seven cloud-routed languages. Sinhala, Tamil, and Arabic reply playback stays local
-and works with an empty key.
+The OpenAI API key enables generated reply speech for the seven cloud-routed languages and the
+optional `/api/voice/transcribe` endpoint for custom clients. The shipped page listens with browser
+speech recognition and does not send microphone recordings to that endpoint. Sinhala, Tamil, and
+Arabic reply playback stays local and works with an empty key.
 
 1. Create a standard project key on the [OpenAI API keys page](https://platform.openai.com/api-keys).
 2. Confirm that the project has access and available quota for `gpt-transcribe` and
@@ -234,7 +240,9 @@ and works with an empty key.
    ```
 
 5. Stop and restart Uvicorn. Settings are cached by the running process.
-6. Open a new booking, leave language detection on automatic, and record a complete phrase.
+6. Open a new booking and select **Listen** on an assistant reply in one of the seven cloud-routed
+   languages to verify generated playback. Page listening works through browser speech recognition
+   whether or not the key is configured.
 
 The server reads the secret with Pydantic `SecretStr`, calls the fixed
 `https://api.openai.com/v1` origin with bearer authentication, and returns only configuration
@@ -255,9 +263,10 @@ Official references:
 - [Text-to-speech guide](https://developers.openai.com/api/docs/guides/text-to-speech)
 - [OpenAI API data controls](https://platform.openai.com/docs/models/default-usage-policies-by-endpoint)
 
-The application does not persist uploaded recordings or transcripts. OpenAI still processes audio
-sent to its transcription endpoint, so review the current provider data controls before using any
-sensitive data.
+The shipped page does not create or upload a microphone recording and does not call the
+transcription endpoint. If a custom client calls `/api/voice/transcribe`, OpenAI processes that
+audio; the application does not persist the uploaded recording or transcript. Review the current
+provider data controls before using any sensitive data.
 
 ## Environment settings
 
@@ -281,10 +290,10 @@ Set it for the clinic before using yearless dates or same-day time validation.
 
 ## Use the booking demo
 
-1. Choose a language or leave **Automatically detect · 10 languages** selected.
-2. Select **Start listening**, speak a complete phrase, and select the button again to finish. A
-   recording also stops after 30 seconds.
-3. Check the displayed transcript and detected language before continuing.
+1. English is selected by default. Keep it selected or choose another one of the ten languages.
+2. Select **Start listening** once and speak a complete phrase. The browser ends recognition after
+   the utterance, and Careline sends the exact returned transcript as the next message.
+3. Check the displayed transcript and selected language before continuing.
 4. Provide a fictional patient name and a clinic/specialty.
 5. Give a date within the next 365 days in `YYYY-MM-DD` format, or use a yearless date such as
    `September 23` or `9/23`.
@@ -296,8 +305,8 @@ Yearless dates resolve to the next valid occurrence within 365 days using the co
 clock. A same-day time must still be in the future. A database unique constraint prevents two
 confirmed demo appointments from taking the same date and time slot.
 
-Select **Stop voice** to stop playback or discard a recording. Typed messages remain available if
-voice recognition is missing or inaccurate.
+Selecting **Start listening** while the assistant is speaking interrupts playback before browser
+recognition begins. Typed messages remain available if voice recognition is missing or inaccurate.
 
 ## API endpoints
 
@@ -316,6 +325,12 @@ Interactive OpenAPI documentation is enabled at `/docs` only when `APP_ENV=devel
 
 Successful audio and all other `/api/` responses use `Cache-Control: no-store`. Local model names,
 OpenAI models, provider host, and filesystem paths cannot be selected by a request.
+
+The shipped browser does not call `POST /api/voice/transcribe`; it sends the exact final transcript
+returned by browser speech recognition to the booking flow while keeping the selected locale. For
+compatibility with custom API clients, the transcription endpoint accepts an explicit supported
+locale or `language_locale=auto` together with a supported `fallback_locale`. This API-only
+automatic mode is not an option in the page selector.
 
 ### Test local Sinhala speech directly
 
@@ -445,7 +460,7 @@ risk; they do not prove that software has no vulnerabilities.
 | `/api/tts/local` returns `503` with `local ... voice is unavailable` | Run `git lfs pull`, verify all six model/config files and hashes, and run `python -m pip show piper-tts`. |
 | Sinhala still calls `/api/voice/speak` | Restart Uvicorn and use `Ctrl+Shift+R`. Current JavaScript must call `/api/tts/local` for `si-LK`, `ta-LK`, and `ar-SA`. |
 | The response text appears but local speech does not play | In browser developer tools, verify `/api/tts/local` returns 200 and `audio/wav`. Test the same endpoint with PowerShell, then check speaker volume and browser autoplay permissions. |
-| OpenAI is not configured / `503` | Add the server-side key and restart for automatic detection and seven cloud voices. The three local voices still work. |
+| OpenAI is not configured / `503` | Add the server-side key and restart for the optional custom-client transcription endpoint and seven cloud voices. The three local voices and shipped page's selected-language browser recognition still work without it. |
 | API key or model rejected | Check the key’s project, model access, status, and permissions. Never paste the key into browser code or a support screenshot. |
 | Microphone is unavailable | Use localhost or HTTPS, grant browser microphone permission, and check the selected input device. |
 | Generated audio is ready but silent | Select **Play audio** on that reply to satisfy the browser’s user-interaction requirement. |

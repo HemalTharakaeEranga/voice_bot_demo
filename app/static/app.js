@@ -4,7 +4,6 @@ const $ = (id) => document.getElementById(id);
 const languageSelect = $("languageSelect");
 const textInput = $("textInput");
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const AUTO_LOCALE = "auto";
 const LOCAL_TTS_LOCALES = new Set(["si-LK", "ta-LK", "ar-SA"]);
 const DEFAULT_LOCALE = "en-US";
 const bookingSteps = ["patient_name", "specialty", "appointment_date", "appointment_time", "confirm"];
@@ -23,14 +22,9 @@ let busy = false;
 let pending = null;
 let capture = null;
 let effectiveLocale = DEFAULT_LOCALE;
-let lockedLocale = null;
-let detectionUnconfirmed = false;
-// Speech generation and transcription are separate services. A failure in one
-// must never turn off the other; otherwise a TTS quota/model error can disable
-// the microphone and automatic language detection for the rest of the page.
+// Reply playback and browser recognition are independent. A TTS provider
+// failure must never disable the microphone for the rest of the page.
 let speechProviderUnavailable = false;
-let transcriptionProviderUnavailable = false;
-let recorderUnavailable = false;
 let speechVersion = 0;
 let speechRequest = null;
 let audio = null;
@@ -44,9 +38,8 @@ function languageFor(locale) {
 function language() {
   return languageFor(effectiveLocale);
 }
-function manualLocale() {
-  return languageSelect.value !== AUTO_LOCALE && languageFor(languageSelect.value)
-    ? languageSelect.value : null;
+function selectedLocale() {
+  return languageFor(languageSelect.value)?.locale || null;
 }
 function defaultLocale() {
   return languageFor(DEFAULT_LOCALE)?.locale || config.languages[0]?.locale || DEFAULT_LOCALE;
@@ -61,16 +54,20 @@ function localVoiceAvailable(locale) {
 function usesLocalTts(locale) {
   return LOCAL_TTS_LOCALES.has(locale);
 }
-function isAutomatic() {
-  return languageSelect.value === AUTO_LOCALE;
-}
-function browserRecognitionLocale() {
-  return manualLocale() || lockedLocale;
-}
 function resetLanguageContext() {
-  lockedLocale = null;
-  detectionUnconfirmed = false;
-  effectiveLocale = manualLocale() || defaultLocale();
+  effectiveLocale = selectedLocale() || defaultLocale();
+}
+function renderVoiceHint(state = document.body.dataset.state) {
+  $("voiceHint").textContent = state === "listening"
+    ? "Speak now in " + localeLabel(effectiveLocale)
+      + ". Your final words will appear automatically."
+    : state === "speaking"
+      ? "Select Start listening to interrupt and reply."
+      : state === "processing"
+        ? "Please wait while Careline prepares the next step."
+        : selectedLocale()
+          ? "Speak naturally in " + localeLabel(effectiveLocale) + "."
+          : "Select a conversation language to begin.";
 }
 function status(message, state = "ready") {
   $("statusLine").textContent = message;
@@ -82,61 +79,38 @@ function status(message, state = "ready") {
     error: "Let’s try again",
   }[state] || "Ready when you are";
   document.body.dataset.state = state;
+  renderVoiceHint(state);
   document.querySelector(".voice-card")?.classList.toggle("is-listening", state === "listening");
   document.querySelector(".voice-card")?.classList.toggle("is-speaking", state === "speaking");
 }
-function serverRecordingAvailable() {
-  return config.openai_configured && !transcriptionProviderUnavailable && !recorderUnavailable
-    && Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
-}
-function captureStrategy() {
-  if (!window.isSecureContext) return null;
-  if (serverRecordingAvailable()) return "server";
-  if (browserRecognitionLocale() && Recognition) return "browser";
-  return null;
+function browserRecognitionAvailable() {
+  return Boolean(window.isSecureContext && selectedLocale() && Recognition);
 }
 function renderLanguageContext() {
   const indicator = $("detectedLanguage");
-  indicator.classList.remove("detected", "needs-selection");
-  if (manualLocale()) {
+  indicator.classList.remove("needs-selection");
+  if (selectedLocale()) {
     indicator.textContent = "Using " + localeLabel(effectiveLocale) + " for this booking.";
     return;
   }
-  if (lockedLocale) {
-    indicator.textContent = "Detected " + localeLabel(lockedLocale) + " · fixed for this booking.";
-    indicator.classList.add("detected");
-    return;
-  }
-  if (!serverRecordingAvailable()) {
-    indicator.textContent = "Automatic detection is unavailable. Select a language for browser listening.";
-    indicator.classList.add("needs-selection");
-    return;
-  }
-  if (detectionUnconfirmed) {
-    indicator.textContent = "Language not confirmed. Continuing in " + localeLabel(effectiveLocale)
-      + "; select a language if needed.";
-    indicator.classList.add("needs-selection");
-    return;
-  }
-  indicator.textContent = "Speak a complete phrase so detection is more reliable.";
+  indicator.textContent = "Select a conversation language to begin.";
+  indicator.classList.add("needs-selection");
 }
 function controls() {
-  const strategy = captureStrategy();
+  const canListen = browserRecognitionAvailable();
   textInput.disabled = busy || ended || Boolean(capture);
   $("textForm").querySelector("button").disabled = textInput.disabled;
-  $("listenButton").disabled = busy || ended || !strategy
-    || Boolean(capture && capture.purpose !== "booking");
-  $("practiceButton").disabled = busy || !manualLocale() || !language() || !strategy
-    || Boolean(capture && capture.purpose !== "practice");
+  $("listenButton").disabled = busy || ended || !canListen || Boolean(capture);
+  $("practiceButton").disabled = busy || !selectedLocale() || !language() || !canListen
+    || Boolean(capture);
   $("testVoiceButton").disabled = busy || Boolean(capture) || !language();
   languageSelect.disabled = busy || Boolean(capture);
   $("listenButtonLabel").textContent = capture?.purpose === "booking"
-    ? "Finish listening" : "Start listening";
+    ? "Listening…" : "Start listening";
   $("practiceButtonLabel").textContent = capture?.purpose === "practice"
-    ? "Finish practice" : "Practice speaking";
-  $("recordingTimer").hidden = !capture?.recorder || capture.recorder.state !== "recording";
-  $("listenButton").setAttribute("aria-pressed", String(capture?.purpose === "booking"));
-  $("practiceButton").setAttribute("aria-pressed", String(capture?.purpose === "practice"));
+    ? "Listening to practice…" : "Practice speaking";
+  $("listenButton").setAttribute("aria-busy", String(capture?.purpose === "booking"));
+  $("practiceButton").setAttribute("aria-busy", String(capture?.purpose === "practice"));
   document.querySelectorAll("#quickReplies button, #quickReplies input").forEach((item) => {
     item.disabled = textInput.disabled;
   });
@@ -218,24 +192,6 @@ function isPersistentProviderError(error) {
   return isQuotaError(error) || [401, 402, 403].includes(error.status)
     || /api key|authentication|unauthorized|permissions/i.test(error.message || "");
 }
-function isProviderAvailabilityError(error) {
-  return error.status === 0 || [401, 402, 403, 429, 500, 502, 503, 504].includes(error.status);
-}
-function recordingServiceMessage(error) {
-  const browserReady = Boolean(browserRecognitionLocale() && Recognition);
-  if (isQuotaError(error)) {
-    return browserReady
-      ? "The server voice quota has been reached. Click Start listening again to use browser recognition, or type your reply."
-      : "The server voice quota has been reached. Select a specific language to use browser recognition, or type your reply.";
-  }
-  if (!isPersistentProviderError(error)) {
-    return "The server transcription service is temporarily unavailable. Click Start listening again to retry, or type your reply.";
-  }
-  return browserReady
-    ? "The server voice service is unavailable. Click Start listening again to use browser recognition, or type your reply."
-    : "Automatic voice detection is unavailable. Select a specific language for browser recognition, or type your reply.";
-}
-
 function normalizedVoiceLocale(locale) {
   return String(locale || "").toLowerCase().replaceAll("_", "-");
 }
@@ -468,31 +424,26 @@ async function speak(text, force = false, locale = effectiveLocale, actionButton
 }
 
 function capabilities() {
-  const selected = manualLocale();
-  const listeningLocale = browserRecognitionLocale();
+  const selected = selectedLocale();
+  const listeningLocale = selected;
   $("practicePhrase").textContent = selected
     ? languageFor(selected)?.sample || "No practice phrase is available for this language."
     : "Select a language above to load a matching practice phrase.";
   $("practicePhrase").lang = selected || effectiveLocale;
   $("practicePhrase").dir = "auto";
-  $("voiceHint").textContent = selected
-    ? "Speak naturally in " + localeLabel(selected) + "."
-    : lockedLocale
-      ? "Continue naturally in " + localeLabel(lockedLocale) + "."
-      : "Start with a complete phrase in your language.";
+  renderVoiceHint();
 
   const notes = [];
   if (!window.isSecureContext) notes.push("Microphone access needs HTTPS or localhost.");
-  if (config.openai_configured && !transcriptionProviderUnavailable) {
-    $("voiceAvailability").textContent = "OpenAI processes recordings only after you press Start listening. This demo does not store audio.";
-    notes.push("Automatic detection is available for recorded speech; detection can be uncertain for short names or phrases.");
+  if (!window.isSecureContext) {
+    $("voiceAvailability").textContent = "Voice listening requires HTTPS or localhost. You can continue with text.";
   } else if (listeningLocale && Recognition) {
-    $("voiceAvailability").textContent = "Listening uses your browser vendor’s speech service. This demo does not store audio.";
+    $("voiceAvailability").textContent = "Listening uses your browser's speech recognition in the selected language. Careline does not create or upload an audio recording; your browser's speech service may process audio under its own terms.";
     notes.push("Browser recognition quality depends on your device, conversation language, and network.");
   } else {
-    $("voiceAvailability").textContent = "Automatic detection is unavailable. Select a language for browser listening, or continue with text.";
+    $("voiceAvailability").textContent = "Voice listening is unavailable in this browser. You can continue with text.";
     notes.push(Recognition
-      ? "Choose a specific language to use browser recognition."
+      ? "Choose a supported conversation language to use browser recognition."
       : "This browser has no speech recognition; text booking remains available.");
   }
   if (listeningLocale) {
@@ -622,19 +573,19 @@ function showBooking(booking) {
   summary.append(title, details, code);
 }
 
-async function startSession(shouldSpeak = true, preserveLanguage = false) {
+async function startSession(shouldSpeak = true) {
   const token = ++version;
   pending?.abort();
   stopCapture();
   stopSpeech();
   sessionId = null;
   ended = false;
-  if (!preserveLanguage) resetLanguageContext();
+  resetLanguageContext();
   pending = new AbortController();
   $("conversation").replaceChildren();
   $("bookingSummary").hidden = true;
-  $("practiceResult").textContent = manualLocale()
-    ? "Listen to the phrase, then record yourself saying it."
+  $("practiceResult").textContent = selectedLocale()
+    ? "Listen to the phrase, then select Practice speaking and say it."
     : "Choose a specific language to practice its phrase.";
   $("practiceResult").classList.remove("success", "error");
   textInput.value = "";
@@ -650,9 +601,7 @@ async function startSession(shouldSpeak = true, preserveLanguage = false) {
     sessionId = data.session_id;
     const replayButton = appendMessage("assistant", data.assistant_text);
     progress(data.step);
-    status(isAutomatic()
-      ? "Ready. Speak a complete phrase with the patient’s name, or type a demo name."
-      : "Ready. Speak or type a demo patient name.");
+    status("Ready. Speak or type a demo patient name.");
     if (shouldSpeak) void speak(data.assistant_text, false, effectiveLocale, replayButton);
     return true;
   } catch (error) {
@@ -669,7 +618,7 @@ async function sendMessage(text) {
     status("Please keep your reply under 500 characters.", "error");
     return;
   }
-  if (!sessionId && !(await startSession(false, true))) {
+  if (!sessionId && !(await startSession(false))) {
     textInput.value = value;
     return;
   }
@@ -698,7 +647,7 @@ async function sendMessage(text) {
   } catch (error) {
     if (token !== version || error.name === "AbortError") return;
     if (error.status === 404) {
-      const restarted = await startSession(false, true);
+      const restarted = await startSession(false);
       textInput.value = value;
       status(restarted
         ? "Your previous booking session expired. A fresh session is ready; your reply is kept below for you to submit again."
@@ -713,11 +662,9 @@ async function sendMessage(text) {
 }
 
 function releaseCapture(active) {
-  clearInterval(active.timer);
-  active.stream?.getTracks().forEach((track) => track.stop());
+  clearTimeout(active.timeout);
   if (capture === active) {
     capture = null;
-    $("recordingTimer").textContent = "00:00";
     controls();
   }
 }
@@ -726,12 +673,7 @@ function stopCapture() {
   const active = capture;
   active.cancelled = true;
   active.recognition?.abort();
-  if (active.recorder?.state === "recording") active.recorder.stop();
   releaseCapture(active);
-}
-function finishCapture() {
-  if (capture?.recorder?.state === "recording") capture.recorder.stop();
-  else capture?.recognition?.stop();
 }
 function normalizePractice(text) {
   return Array.from(String(text || "").normalize("NFKC").toLocaleLowerCase()
@@ -753,18 +695,7 @@ function comparePractice(expected, actual) {
   const length = Math.max(left.length, right.length);
   return length ? Math.round(100 * (1 - previous[right.length] / length)) : 0;
 }
-function applyDetectedLanguage(data) {
-  if (!isAutomatic() || lockedLocale) return;
-  if (data?.language_detected === true && languageFor(data.language_locale)) {
-    lockedLocale = data.language_locale;
-    effectiveLocale = lockedLocale;
-    detectionUnconfirmed = false;
-  } else {
-    detectionUnconfirmed = true;
-  }
-  capabilities();
-}
-async function receiveTranscript(text, active, transcription = null) {
+async function receiveTranscript(text, active) {
   if (active.cancelled || active.version !== version) return;
   const value = String(text || "").trim();
   if (!value) {
@@ -781,7 +712,6 @@ async function receiveTranscript(text, active, transcription = null) {
     status("Practice complete. Your booking has not changed.");
     return;
   }
-  applyDetectedLanguage(transcription);
   textInput.value = value;
   await sendMessage(value);
 }
@@ -796,15 +726,19 @@ function startBrowserRecognition(active) {
     if (!active.cancelled) status("Listening. Speak now; pause when you’re finished.", "listening");
   };
   recognition.onresult = (event) => {
+    if (active.cancelled || active.received || capture !== active) return;
     active.received = true;
+    const transcript = Array.from(event.results, (result) => result[0]?.transcript || "")
+      .join(" ");
     releaseCapture(active);
-    void receiveTranscript(event.results[0][0].transcript, active);
+    void receiveTranscript(transcript, active);
   };
   recognition.onerror = (event) => {
-    if (active.cancelled) return;
+    if (active.cancelled || active.received || capture !== active) return;
     active.cancelled = true;
     const errors = {
       "not-allowed": "Microphone access was denied. Allow it in browser settings, or type your reply.",
+      "service-not-allowed": "Browser speech recognition is disabled by browser or system policy. Enable it or type your reply.",
       "no-speech": "No speech was detected. Try again in a quiet space.",
       "audio-capture": "No microphone is available. Connect one or type your reply.",
       network: "Browser speech could not connect. Try again or type your reply.",
@@ -819,93 +753,19 @@ function startBrowserRecognition(active) {
       status("No speech received. Select Start listening to try again.");
     }
   };
+  active.timeout = setTimeout(() => {
+    if (capture !== active || active.cancelled) return;
+    active.cancelled = true;
+    recognition.abort();
+    releaseCapture(active);
+    status("Listening stopped because no result was received. Select Start listening to try again.", "error");
+  }, 45000);
   recognition.start();
 }
-async function startServerRecording(active) {
-  status("Waiting for microphone permission…", "processing");
-  const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-  if (active.cancelled || active.version !== version) {
-    stream.getTracks().forEach((track) => track.stop());
-    return;
-  }
-  active.stream = stream;
-  const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
-    .find((type) => MediaRecorder.isTypeSupported(type));
-  if (!mimeType) {
-    recorderUnavailable = true;
-    throw new Error("This browser cannot create a supported recording. Select a language to use browser recognition, or use text.");
-  }
-  const recorder = new MediaRecorder(stream, {mimeType});
-  active.recorder = recorder;
-  const chunks = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size) chunks.push(event.data);
-  };
-  recorder.onerror = () => {
-    if (active.cancelled) return;
-    active.cancelled = true;
-    recorderUnavailable = true;
-    releaseCapture(active);
-    capabilities();
-    status("Recording failed. Select a language for browser recognition, or type your reply.", "error");
-  };
-  recorder.onstop = async () => {
-    releaseCapture(active);
-    if (active.cancelled || active.version !== version) return;
-    const blob = new Blob(chunks, {type: recorder.mimeType});
-    if (blob.size < 100) {
-      status("The recording was empty. Please try again.", "error");
-      return;
-    }
-    const form = new FormData();
-    form.append("audio", blob, mimeType.includes("mp4") ? "recording.mp4" : "recording.webm");
-    const autoUnlocked = isAutomatic() && !lockedLocale;
-    form.append("language_locale", autoUnlocked ? AUTO_LOCALE : active.locale);
-    form.append("fallback_locale", active.locale);
-    pending = new AbortController();
-    setBusy(true);
-    status(autoUnlocked ? "Transcribing and identifying the language…" : "Transcribing your recording…", "processing");
-    try {
-      const response = await request("/api/voice/transcribe", {
-        method: "POST",
-        body: form,
-        signal: pending.signal,
-      });
-      const data = await response.json();
-      if (active.cancelled || active.version !== version) return;
-      setBusy(false);
-      await receiveTranscript(data.text, active, data);
-    } catch (error) {
-      if (active.version !== version || error.name === "AbortError") return;
-      if (isProviderAvailabilityError(error)) {
-        if (isPersistentProviderError(error)) transcriptionProviderUnavailable = true;
-        capabilities();
-        status(recordingServiceMessage(error), "error");
-      } else {
-        status(error.message, "error");
-      }
-    } finally {
-      if (active.version === version) setBusy(false);
-    }
-  };
-  recorder.start();
-  controls();
-  let seconds = 0;
-  active.timer = setInterval(() => {
-    seconds += 1;
-    $("recordingTimer").textContent = "00:" + String(seconds).padStart(2, "0");
-    if (seconds >= 30 && recorder.state === "recording") recorder.stop();
-  }, 1000);
-  status("Recording. Speak now, then finish (30 seconds maximum).", "listening");
-}
-async function startCapture(purpose) {
-  if (capture) {
-    if (capture.purpose === purpose) finishCapture();
-    return;
-  }
-  const strategy = captureStrategy();
-  if (busy || !strategy || (purpose === "booking" && ended)) return;
-  if (purpose === "practice" && !manualLocale()) {
+function startCapture(purpose) {
+  if (capture) return;
+  if (busy || !browserRecognitionAvailable() || (purpose === "booking" && ended)) return;
+  if (purpose === "practice" && !selectedLocale()) {
     status("Select a language before starting speaking practice.", "error");
     return;
   }
@@ -915,14 +775,13 @@ async function startCapture(purpose) {
     version,
     locale: effectiveLocale,
     sample: language()?.sample || "",
-    strategy,
     cancelled: false,
   };
   capture = active;
   controls();
   try {
-    if (strategy === "server") await startServerRecording(active);
-    else startBrowserRecognition(active);
+    status("Starting listening. Allow microphone access if asked.", "processing");
+    startBrowserRecognition(active);
   } catch (error) {
     if (active.cancelled || active.version !== version) return;
     active.cancelled = true;
@@ -955,13 +814,6 @@ $("autoSpeak").addEventListener("change", () => {
     status("Automatic spoken replies paused.");
   }
 });
-$("stopVoiceButton").addEventListener("click", () => {
-  stopSpeech();
-  stopCapture();
-  status(busy
-    ? "Audio stopped. Waiting for the current request…"
-    : "Voice stopped. You can continue with text.");
-});
 $("textForm").addEventListener("submit", (event) => {
   event.preventDefault();
   void sendMessage(textInput.value);
@@ -981,16 +833,13 @@ async function initialize() {
   try {
     config = await (await request("/api/config")).json();
     const previous = languageSelect.value;
-    const automatic = document.createElement("option");
-    automatic.value = AUTO_LOCALE;
-    automatic.textContent = "Automatically detect · " + config.languages.length + " languages";
-    languageSelect.replaceChildren(automatic, ...config.languages.map((item) => {
+    languageSelect.replaceChildren(...config.languages.map((item) => {
       const option = document.createElement("option");
       option.value = item.locale;
       option.textContent = item.label;
       return option;
     }));
-    languageSelect.value = previous === AUTO_LOCALE || !languageFor(previous) ? AUTO_LOCALE : previous;
+    languageSelect.value = languageFor(previous) ? previous : defaultLocale();
     resetLanguageContext();
     capabilities();
     await startSession(false);

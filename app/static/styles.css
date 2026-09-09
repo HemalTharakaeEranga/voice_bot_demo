@@ -65,7 +65,6 @@ h1 em { font-family: Georgia, "Times New Roman", serif; font-weight: 400; color:
 select { width: 100%; min-width: 0; height: 41px; color: var(--ink); background: #ffffffbd; border: 1px solid #d5e1d8; border-radius: 7px; padding: 0 27px 0 11px; font-size: 14px; }
 .language-detection { display: flex; align-items: flex-start; gap: 7px; min-height: 18px; color: #64796e; font-size: 12px; line-height: 1.55; }
 .language-detection .status-dot { margin-top: 6px; }
-.language-detection.detected { color: var(--teal-dark); font-weight: 600; }
 .language-detection.needs-selection { color: #8a5f25; }
 .voice-stage { text-align: center; position: relative; padding: 8px 0 20px; }
 .voice-orbit { width: 230px; height: 219px; position: relative; display: grid; place-items: center; margin: 0 auto; }
@@ -82,15 +81,12 @@ select { width: 100%; min-width: 0; height: 41px; color: var(--ink); background:
 .spark-two { right: 48px; bottom: 41px; width: 6px; height: 6px; background: #7ba38a; }
 .voice-state { font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
 .voice-hint { font-size: 13px; color: var(--muted); margin-top: 7px; }
-.recording-timer { font-family: ui-monospace, monospace; font-size: 14px; color: var(--teal-dark); display: inline-block; margin-top: 6px; }
 .voice-actions { display: flex; gap: 9px; }
 .primary { background: var(--teal); color: #fff; }
 .primary:hover:not(:disabled) { background: var(--teal-dark); box-shadow: 0 3px 10px #1467591c; }
 .secondary { background: #fff; color: var(--ink); border: 1px solid #d9e3db; }
 .secondary:hover:not(:disabled) { background: #e5ede5; }
 .listen-button { height: 45px; flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-.stop-button { display: inline-flex; align-items: center; justify-content: center; padding: 0 16px; gap: 7px; font-size: 14px; }
-.stop-icon { width: 8px; height: 8px; border-radius: 2px; background: currentColor; opacity: .65; }
 .voice-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 20px; }
 .checkbox-label { display: inline-flex; gap: 7px; align-items: center; font-size: 12px; color: #657a6e; cursor: pointer; }
 .checkbox-label input { appearance: auto; width: 13px; height: 13px; margin: 0; accent-color: var(--teal); }
@@ -233,7 +229,6 @@ select { width: 100%; min-width: 0; height: 41px; color: var(--ink); background:
   .voice-stage { padding-bottom: 17px; }
   .voice-actions { flex-wrap: wrap; }
   .listen-button { min-width: 100%; }
-  .stop-button { width: 100%; min-height: 33px; }
   .voice-options { flex-wrap: wrap; margin-top: 13px; gap: 10px; }
   .voice-assurance { margin-left: -17px; margin-right: -17px; padding: 11px 17px; }
   .conversation-heading { padding: 20px 15px 15px; align-items: flex-start; flex-wrap: wrap; gap: 13px; }
@@ -285,7 +280,6 @@ select { width: 100%; min-width: 0; height: 41px; color: var(--ink); background:
   .voice-orbit { width: 230px; height: 215px; }
   .voice-actions { flex-wrap: nowrap; }
   .listen-button { min-width: 0; }
-  .stop-button { width: auto; min-height: 45px; }
   .voice-options { margin: 15px 0 20px; }
   .voice-assurance { margin: 0 -21px; padding: 11px 19px; }
   .conversation-heading { flex-wrap: nowrap; padding: 21px 18px 18px; align-items: center; }
@@ -324,7 +318,7 @@ select { width: 100%; min-width: 0; height: 41px; color: var(--ink); background:
 }
 @media (max-width: 380px) {
   .voice-actions { flex-wrap: wrap; }
-  .listen-button, .stop-button { min-width: 100%; min-height: 44px; }
+  .listen-button { min-width: 100%; min-height: 44px; }
   .conversation-heading { flex-wrap: wrap; }
   .practice-intro { flex-wrap: wrap; }
   .voice-settings { grid-template-columns: 1fr; }

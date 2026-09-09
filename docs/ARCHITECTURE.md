@@ -9,49 +9,51 @@ state machine rather than an LLM.
 ## Unified voice flow
 
 ```text
-One microphone button
+Language selector (English by default)
         |
-        +-- OpenAI configured --> short MediaRecorder clip
-        |                           |
-        |                           v
-        |                    /api/voice/transcribe
-        |                           |
-        |                 reliable supported language?
-        |                      /              \
-        |                    yes              no
-        |                    lock       keep safe fallback
-        |                      \              /
-        +-- manual fallback --> browser SpeechRecognition
-                                   |
-                                   v
-                            /api/messages
-                                   |
-                       deterministic dialogue manager
-                          | validation / safety rules
-                                   |
-                          SQLite demo appointment store
-                                   |
-                         localized assistant response
-                                   |
-                    locale-based speech routing
-                         /                    \
-      /api/tts/local                    /api/voice/speak
-      Sinhala / Tamil / Arabic          other seven locales
-              local Piper WAV             OpenAI speech MP3
-                         \                    /
-                      same-locale browser voice fallback
+Start listening button (one click)
+        |
+browser SpeechRecognition with selected locale
+        |
+browser ends after the utterance
+        |
+exact final transcript
+        |
+/api/messages
+        |
+deterministic dialogue manager
+   | validation / safety rules
+        |
+SQLite demo appointment store
+        |
+localized assistant response
+        |
+locale-based speech routing
+     /                    \
+/api/tts/local       /api/voice/speak
+Sinhala / Tamil /    other seven locales
+Arabic Piper WAV     OpenAI speech MP3
+     \                    /
+ same-locale browser voice fallback
 ```
 
-The browser never receives the OpenAI API key. With `gpt-transcribe`, automatic mode sends the ten
-supported codes as language hints. The server accepts a detected language only when provider
-metadata resolves to one unique member of that fixed allowlist. That locale is then fixed for the
-booking so a short name, date, or time cannot change the conversation language. A new booking
-unlocks detection.
+The browser never receives the OpenAI API key. The shipped page fixes `SpeechRecognition` to the
+explicitly selected locale and sends the exact final transcript to `/api/messages`. It does not use
+`MediaRecorder`, create or upload an audio recording, or call `/api/voice/transcribe`. The browser
+vendor may process microphone audio according to its own terms. The user can change languages with
+the selector, and English is the initial selection. Changing the selection starts a fresh booking
+in that locale.
 
-If server speech is unavailable after a language has been fixed, the same microphone control can
-continue with browser recognition fixed to that locale. Before a language is known, the user must
-select one for that fallback because browser speech recognition does not reliably identify an
-arbitrary spoken language.
+Selecting **Start listening** interrupts reply playback and begins recognition. The control needs
+one click: the browser ends after the utterance, then the returned words appear as the user's
+message. There is no recording timer or **Finish listening** step.
+
+The OpenAI key enables the seven cloud reply voices and the optional `/api/voice/transcribe`
+endpoint for custom clients. That endpoint accepts an explicit supported locale or
+`language_locale=auto` together with a supported `fallback_locale`. In API-only automatic mode,
+`gpt-transcribe` receives the ten supported codes as hints, and the server reports a detected
+language only when provider metadata resolves to one unique member of the fixed allowlist. This
+compatibility mode is not exposed in the shipped page selector.
 
 For reply playback, the server routes `si-LK`, `ta-LK`, and `ar-SA` to pinned local Piper models.
 Those paths do not need an OpenAI key or quota and return WAV audio. The Arabic application locale
@@ -74,7 +76,7 @@ the final protection against concurrent slot conflicts. Completed confirmations 
 
 Date and time parsing is local and allowlisted; no input is interpreted as code or passed to SQL.
 It accepts localized digits, configured month names, locale-ordered short dates, common clock
-markers, and a bounded set of spoken English clock phrases. Yearless dates resolve to their next
+markers, and bounded spoken English and Sinhala clock phrases. Yearless dates resolve to their next
 valid occurrence within 365 days. The API uses `CLINIC_UTC_OFFSET_MINUTES` (330 by default) as the
 authoritative clinic clock and rejects same-day slots that have passed, including a final recheck
 at confirmation.

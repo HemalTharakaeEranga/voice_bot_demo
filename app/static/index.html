@@ -29,7 +29,7 @@
       <div class="hero-copy">
         <p class="eyebrow"><span></span> A LITTLE MORE HUMAN. A LOT MORE HELPFUL.</p>
         <h1 id="page-title">A warmer welcome.<br><em>In your language.</em></h1>
-        <p class="subtitle">Your first conversation with better care starts here. Choose a language or let the assistant detect one from a complete spoken phrase, then book one step at a time.</p>
+        <p class="subtitle">Your first conversation with better care starts here. Choose one of ten languages, then speak or type to book one step at a time.</p>
       </div>
       <div class="hero-aside">
         <div class="language-stack" aria-hidden="true"><span>Hello</span><span>வணக்கம்</span><span>ආයුබෝවන්</span></div>
@@ -46,8 +46,7 @@
         <div class="voice-settings">
           <label for="languageSelect"><span>Conversation language</span>
             <select id="languageSelect">
-              <option value="auto" selected>Automatically detect · 10 languages</option>
-              <option value="en-US">English</option>
+              <option value="en-US" selected>English</option>
               <option value="si-LK">සිංහල · Sinhala</option>
               <option value="ta-LK">தமிழ் · Tamil</option>
               <option value="hi-IN">हिन्दी · Hindi</option>
@@ -59,7 +58,7 @@
               <option value="ja-JP">日本語 · Japanese</option>
             </select>
           </label>
-          <p id="detectedLanguage" class="language-detection" role="status"><span class="status-dot" aria-hidden="true"></span> Speak a complete phrase so detection is more reliable.</p>
+          <p id="detectedLanguage" class="language-detection" role="status"><span class="status-dot" aria-hidden="true"></span> Using English for this booking.</p>
         </div>
         <div class="voice-stage">
           <div class="voice-orbit" aria-hidden="true">
@@ -68,18 +67,16 @@
             <span class="orbit-spark spark-one"></span><span class="orbit-spark spark-two"></span>
           </div>
           <p id="voiceState" class="voice-state" role="status">Ready when you are</p>
-          <p id="voiceHint" class="voice-hint">Start with a complete phrase in your language.</p>
-          <span id="recordingTimer" class="recording-timer" hidden>00:00</span>
+          <p id="voiceHint" class="voice-hint">Speak naturally in English.</p>
         </div>
         <div class="voice-actions">
           <button id="listenButton" type="button" class="primary listen-button"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span id="listenButtonLabel">Start listening</span></button>
-          <button id="stopVoiceButton" type="button" class="secondary stop-button"><span class="stop-icon" aria-hidden="true"></span> Stop voice</button>
         </div>
         <div class="voice-options">
           <label class="checkbox-label" for="autoSpeak"><input id="autoSpeak" type="checkbox" checked><span>Read replies aloud</span></label>
           <button id="testVoiceButton" type="button" class="text-button"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m9 4-4 3H2v6h3l4 3V4ZM13 7a5 5 0 0 1 0 6M16 4a9 9 0 0 1 0 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Test voice</button>
         </div>
-        <div class="voice-assurance"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2 16 5v4.5c0 3.6-3.1 6.4-6 7.8-2.9-1.4-6-4.2-6-7.8V5l6-3Z" stroke="currentColor" stroke-width="1.4"/><path d="m7.3 9.7 1.7 1.7 3.7-3.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><p id="voiceAvailability" role="status">When automatic detection is available, OpenAI processes recordings only after you press Start listening. This demo does not store audio.</p></div>
+        <div class="voice-assurance"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2 16 5v4.5c0 3.6-3.1 6.4-6 7.8-2.9-1.4-6-4.2-6-7.8V5l6-3Z" stroke="currentColor" stroke-width="1.4"/><path d="m7.3 9.7 1.7 1.7 3.7-3.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><p id="voiceAvailability" role="status">Listening uses your browser's speech recognition in the selected language. Careline does not create or upload an audio recording; your browser's speech service may process audio under its own terms.</p></div>
       </section>
       <section class="conversation-card" aria-labelledby="conversation-title">
         <div class="conversation-heading">
@@ -119,7 +116,7 @@
 
     <section id="about" class="demo-notes" aria-labelledby="about-title">
       <div><h2 id="about-title">Built for a better first conversation.</h2><p>This demo supports appointment booking in 10 configured languages. It offers no diagnosis, treatment, or medical advice. Use fictional details only.</p></div>
-      <div><h3>A quick note on voice</h3><p>Spoken replies are AI generated. Automatic detection uses OpenAI when configured. Manual fallback can use your browser vendor’s speech service. Speaking practice compares recognized words, not pronunciation.</p><p id="browserNotice" class="notice" role="status"></p></div>
+      <div><h3>A quick note on voice</h3><p>The page listens through your browser's speech recognition in the selected language and automatically adds the final words to the conversation. OpenAI can generate spoken replies when configured. Speaking practice compares recognized words, not pronunciation.</p><p id="browserNotice" class="notice" role="status"></p></div>
       <div><h3>Keep the conversation simple</h3><p>Enter dates as YYYY-MM-DD and times as 24-hour HH:MM. Start listening while a reply plays to interrupt. You can always continue by typing.</p></div>
     </section>
   </main>

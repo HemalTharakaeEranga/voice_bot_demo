@@ -89,7 +89,7 @@ async function app(options = {}) {
     assert.ok(elements.has(id), `The HTML must contain #${id}`);
     return elements.get(id);
   };
-  element("languageSelect").value = options.locale || "auto";
+  element("languageSelect").value = options.locale || "en-US";
   element("autoSpeak").checked = options.autoSpeak !== false;
   element("textForm").append(new Element("button"));
 
@@ -124,6 +124,8 @@ async function app(options = {}) {
     stop() { this.onend?.(); }
     abort() { this.aborted = true; }
     result(text) { this.onresult?.({results: [[{transcript: text}]]}); }
+    error(error) { this.onerror?.({error}); }
+    end() { this.onend?.(); }
   }
   class Recorder {
     static isTypeSupported() { return options.supportedRecording !== false; }
@@ -189,7 +191,6 @@ async function app(options = {}) {
     addEventListener() {},
   };
   let sessionNumber = 0;
-  const transcriptions = [...(options.transcriptions || [])];
   const sandbox = {
     window,
     document,
@@ -209,12 +210,12 @@ async function app(options = {}) {
     },
     Audio: FakeAudio,
     URL: {createObjectURL: () => "blob:test", revokeObjectURL() {}},
-    setInterval(callback) {
+    setTimeout(callback) {
       const id = Symbol("timer");
       timers.set(id, callback);
       return id;
     },
-    clearInterval(id) { timers.delete(id); },
+    clearTimeout(id) { timers.delete(id); },
     async fetch(url, requestOptions = {}) {
       calls.push({url, options: requestOptions});
       const custom = options.fetch?.(url, requestOptions, calls);
@@ -246,13 +247,6 @@ async function app(options = {}) {
         const body = JSON.parse(requestOptions.body);
         return response({assistant_text: `Reply ${body.language_locale}`, step: "specialty", status: "active"});
       }
-      if (url === "/api/voice/transcribe") {
-        return response(transcriptions.shift() || {
-          text: "Demo Patient",
-          language_locale: "en-US",
-          language_detected: false,
-        });
-      }
       if (["/api/voice/speak", "/api/tts/local"].includes(url)) return response({});
       throw new Error(`Unexpected request ${url}`);
     },
@@ -268,9 +262,12 @@ async function app(options = {}) {
   };
 }
 
-test("markup exposes one unified microphone and no provider or connection selector", () => {
+test("markup defaults to English with one listening control and no automatic option", () => {
   assert.equal((markup.match(/id="listenButton"/g) || []).length, 1);
-  assert.match(markup, /value="auto" selected>Automatically detect · 10 languages/);
+  assert.match(markup, /value="en-US" selected>English/);
+  assert.doesNotMatch(markup, /value="auto"|Automatically detect|id="stopVoiceButton"|Stop voice|recordingTimer|Finish listening/);
+  assert.doesNotMatch(source, /stopVoiceButton|AUTO_LOCALE|lockedLocale|recordingTimer|finishCapture|startServerRecording/);
+  assert.doesNotMatch(source, /MediaRecorder|getUserMedia|\/api\/voice\/transcribe/);
   assert.doesNotMatch(markup + source, /voiceProvider|checkConnectionButton|providerStatus/);
   assert.doesNotMatch(source, /OPENAI_API_KEY|innerHTML/);
 });
@@ -283,7 +280,7 @@ test("every JavaScript id exists in the shipped markup", () => {
 test("initialization creates only a text session and makes no paid voice or check request", async () => {
   const ui = await app();
   assert.deepEqual(ui.calls.map((call) => call.url), ["/api/config", "/api/sessions"]);
-  assert.equal(ui.element("languageSelect").value, "auto");
+  assert.equal(ui.element("languageSelect").value, "en-US");
   assert.equal(JSON.parse(ui.calls[1].options.body).language_locale, "en-US");
   assert.equal(ui.audios.length, 0);
   assert.equal(ui.spoken.length, 0);
@@ -329,146 +326,138 @@ test("date picker uses the server-provided clinic date", async () => {
   assert.equal(dateInput.value, "2026-09-09");
 });
 
-test("auto recording sends auto plus fallback, locks reliable detection, and replies in that locale", async () => {
-  const ui = await app({transcriptions: [{
-    text: "මගේ නම හේමල්",
-    language_locale: "si-LK",
-    language_detected: true,
-    language_code: "si",
-  }]});
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
+test("one Start listening click recognizes and displays the exact final words", async () => {
+  const transcript = "My exact captured words";
+  const ui = await app({autoSpeak: false});
+
+  assert.equal(ui.element("listenButtonLabel").textContent, "Start listening");
+  assert.equal(ui.element("listenButton").attributes["aria-busy"], "false");
+  assert.equal(ui.element("listenButton").attributes["aria-pressed"], undefined);
+  await ui.element("listenButton").emit("click");
+  assert.equal(ui.recognitions.length, 1);
+  assert.equal(ui.recognitions[0].lang, "en-US");
+  assert.equal(ui.recorders.length, 0);
+  assert.equal(ui.tracks.length, 0);
+  assert.equal(ui.element("listenButtonLabel").textContent, "Listening\u2026");
+  assert.equal(ui.element("listenButton").attributes["aria-busy"], "true");
+  assert.equal(ui.element("listenButton").disabled, true);
+  assert.equal(ui.element("voiceState").textContent, "Listening to you");
+
+  ui.recognitions[0].result(transcript);
+  ui.recognitions[0].result("Duplicate stale result");
   await settle(8);
 
-  const transcribe = ui.calls.find((call) => call.url === "/api/voice/transcribe");
-  assert.equal(transcribe.options.body.get("language_locale"), "auto");
-  assert.equal(transcribe.options.body.get("fallback_locale"), "en-US");
+  assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
   const message = ui.calls.find((call) => call.url === "/api/messages");
-  assert.equal(JSON.parse(message.options.body).language_locale, "si-LK");
-  assert.equal(ui.run("effectiveLocale"), "si-LK");
-  assert.equal(ui.run("lockedLocale"), "si-LK");
-  assert.equal(ui.element("languageSelect").value, "auto");
-  assert.match(ui.element("detectedLanguage").textContent, /Detected .*Sinhala/);
-  const speech = ui.calls.find((call) => call.url === "/api/tts/local");
-  assert.equal(JSON.parse(speech.options.body).language_locale, "si-LK");
-  assert.deepEqual(ui.messageLocales(), ["en-US", "si-LK", "si-LK"]);
+  assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 1);
+  assert.equal(JSON.parse(message.options.body).text, transcript);
+  assert.equal(JSON.parse(message.options.body).language_locale, "en-US");
+  assert.deepEqual(ui.text(), ["Greeting en-US 1", transcript, "Reply en-US"]);
+  assert.equal(ui.element("listenButtonLabel").textContent, "Start listening");
+  assert.equal(ui.element("listenButton").attributes["aria-busy"], "false");
+  assert.equal(ui.element("listenButton").disabled, false);
 });
 
-test("automatic detection accepts each of the ten supported locales without drift", async () => {
+test("Start listening interrupts active assistant playback before recognition", async () => {
+  const ui = await app({autoSpeak: false});
+  await ui.run('speak("Assistant reply", true, "en-US")');
+  assert.equal(ui.audios[0].paused, undefined);
+
+  await ui.element("listenButton").emit("click");
+  assert.equal(ui.audios[0].paused, true);
+  assert.equal(ui.recognitions.length, 1);
+  assert.equal(ui.recorders.length, 0);
+  ui.run("stopCapture()");
+});
+
+test("browser recognition and booking messages keep all ten selected locales", async () => {
   for (const locale of locales) {
-    const ui = await app({
-      autoSpeak: false,
-      transcriptions: [{
-        text: "Localized patient reply",
-        language_locale: locale,
-        language_detected: true,
-        language_code: locale.split("-")[0],
-      }],
-    });
-    await ui.run('startCapture("booking")');
-    ui.run("finishCapture()");
+    const ui = await app({locale, autoSpeak: false});
+    await ui.element("listenButton").emit("click");
+    assert.equal(ui.recognitions.length, 1, locale);
+    assert.equal(ui.recognitions[0].lang, locale, locale);
+    assert.equal(ui.recorders.length, 0, locale);
+    ui.recognitions[0].result("Localized patient reply");
     await settle(8);
 
-    const transcription = ui.calls.find((call) => call.url === "/api/voice/transcribe");
     const message = ui.calls.find((call) => call.url === "/api/messages");
-    assert.equal(transcription.options.body.get("language_locale"), "auto", locale);
-    assert.equal(ui.run("lockedLocale"), locale);
     assert.equal(ui.run("effectiveLocale"), locale);
     assert.equal(JSON.parse(message.options.body).language_locale, locale);
-    assert.deepEqual(ui.messageLocales(), ["en-US", locale, locale]);
+    assert.deepEqual(ui.messageLocales(), [locale, locale, locale]);
+    assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false, locale);
   }
 });
 
-test("uncertain or unsupported detection does not claim or lock a language", async () => {
-  for (const transcription of [
-    {text: "Hemal", language_locale: "fr-FR", language_detected: false},
-    {text: "Hemal", language_locale: "xx-XX", language_detected: true, language_code: "xx"},
-    {text: "Hemal"},
-  ]) {
-    const ui = await app({transcriptions: [transcription]});
-    await ui.run('startCapture("booking")');
-    ui.run("finishCapture()");
-    await settle(8);
-    assert.equal(ui.run("lockedLocale"), null);
-    assert.equal(ui.run("effectiveLocale"), "en-US");
-    assert.match(ui.element("detectedLanguage").textContent, /Language not confirmed/);
-    const message = ui.calls.find((call) => call.url === "/api/messages");
-    assert.equal(JSON.parse(message.options.body).language_locale, "en-US");
-  }
+test("the language indicator reports the selected language without a detection claim", async () => {
+  const ui = await app({locale: "si-LK", autoSpeak: false});
+
+  assert.equal(ui.run("effectiveLocale"), "si-LK");
+  assert.equal(ui.element("languageSelect").value, "si-LK");
+  assert.match(ui.element("detectedLanguage").textContent, /Using .*Sinhala/);
+  assert.doesNotMatch(ui.element("detectedLanguage").textContent, /Detected/);
 });
 
-test("locked auto language is used explicitly on later recordings and cannot drift", async () => {
-  const ui = await app({transcriptions: [
-    {text: "මගේ නම හේමල්", language_locale: "si-LK", language_detected: true},
-    {text: "හෘද රෝග", language_locale: "fr-FR", language_detected: true},
-  ]});
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
+test("the selected language stays fixed across later recognition turns", async () => {
+  const ui = await app({locale: "si-LK", autoSpeak: false});
+  await ui.element("listenButton").emit("click");
+  ui.recognitions[0].result("First patient reply");
   await settle(8);
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
+  await ui.element("listenButton").emit("click");
+  ui.recognitions[1].result("Second patient reply");
   await settle(8);
-  const uploads = ui.calls.filter((call) => call.url === "/api/voice/transcribe");
-  assert.equal(uploads[1].options.body.get("language_locale"), "si-LK");
-  assert.equal(uploads[1].options.body.get("fallback_locale"), "si-LK");
+  assert.equal(ui.recognitions[0].lang, "si-LK");
+  assert.equal(ui.recognitions[1].lang, "si-LK");
+  assert.equal(ui.recorders.length, 0);
+  assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
   assert.equal(ui.run("effectiveLocale"), "si-LK");
   const messages = ui.calls.filter((call) => call.url === "/api/messages");
   assert.equal(JSON.parse(messages[1].options.body).language_locale, "si-LK");
 });
 
-test("voice quota failure keeps OpenAI listening and the detected booking language", async () => {
+test("generated-voice quota does not change or disable browser listening", async () => {
   const ui = await app({
+    locale: "fr-FR",
     voices: [{name: "English", lang: "en-US"}],
-    transcriptions: [{
-      text: "Je m'appelle Hémal",
-      language_locale: "fr-FR",
-      language_detected: true,
-      language_code: "fr",
-    }],
     fetch: (url) => url === "/api/voice/speak"
       ? response({detail: "OpenAI usage limit reached"}, 429) : undefined,
   });
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await settle(8);
+  await ui.run('speak("Bonjour", true, "fr-FR")');
+  await settle();
 
-  assert.equal(ui.run("lockedLocale"), "fr-FR");
+  assert.equal(ui.run("effectiveLocale"), "fr-FR");
   assert.equal(ui.run("speechProviderUnavailable"), true);
-  assert.equal(ui.run("transcriptionProviderUnavailable"), false);
-  assert.equal(ui.element("languageSelect").value, "auto");
+  assert.equal(ui.element("languageSelect").value, "fr-FR");
   assert.equal(ui.element("listenButton").disabled, false);
-  assert.match(ui.element("voiceAvailability").textContent, /OpenAI processes recordings/);
-  assert.equal(ui.spoken.length, 0);
-  assert.match(ui.element("statusLine").textContent, /server voice quota/i);
 
-  await ui.run('startCapture("booking")');
-  assert.equal(ui.recorders.length, 2);
-  assert.equal(ui.recognitions.length, 0);
+  await ui.element("listenButton").emit("click");
+  assert.equal(ui.recognitions.length, 1);
+  assert.equal(ui.recognitions[0].lang, "fr-FR");
+  assert.equal(ui.recorders.length, 0);
+  assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
   ui.run("stopCapture()");
   assert.equal(ui.calls.filter((call) => call.url === "/api/sessions").length, 1);
 });
 
-test("new booking clears the automatic language lock", async () => {
-  const ui = await app({transcriptions: [
-    {text: "මගේ නම හේමල්", language_locale: "si-LK", language_detected: true},
-  ]});
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await settle(8);
-  assert.equal(ui.run("lockedLocale"), "si-LK");
+test("new booking preserves the selected language", async () => {
+  const ui = await app({locale: "si-LK", autoSpeak: false});
   await ui.run("startSession(false)");
-  assert.equal(ui.run("lockedLocale"), null);
-  assert.equal(ui.run("effectiveLocale"), "en-US");
-  assert.match(ui.element("detectedLanguage").textContent, /complete phrase/);
+  assert.equal(ui.run("effectiveLocale"), "si-LK");
+  assert.equal(ui.element("languageSelect").value, "si-LK");
+  const sessions = ui.calls.filter((call) => call.url === "/api/sessions");
+  assert.equal(JSON.parse(sessions.at(-1).options.body).language_locale, "si-LK");
 });
 
-test("without server voice auto mode asks for a language while text remains available", async () => {
+test("without OpenAI the default English selection uses browser recognition", async () => {
   const ui = await app({configured: false});
-  assert.equal(ui.element("listenButton").disabled, true);
-  assert.equal(ui.element("practiceButton").disabled, true);
+  assert.equal(ui.element("languageSelect").value, "en-US");
+  assert.equal(ui.element("listenButton").disabled, false);
+  assert.equal(ui.element("practiceButton").disabled, false);
   assert.equal(ui.element("textInput").disabled, false);
-  assert.match(ui.element("detectedLanguage").textContent, /Select a language/);
-  assert.match(ui.element("voiceAvailability").textContent, /browser listening/);
+  assert.match(ui.element("detectedLanguage").textContent, /Using English/);
+  assert.match(ui.element("voiceAvailability").textContent, /browser's speech recognition/);
+  assert.match(ui.element("voiceAvailability").textContent, /does not create or upload an audio recording/);
+  await ui.element("listenButton").emit("click");
+  assert.equal(ui.recognitions[0].lang, "en-US");
 });
 
 test("without server voice a manual language uses browser recognition", async () => {
@@ -489,78 +478,6 @@ test("without server voice a manual language uses browser recognition", async ()
   assert.equal(ui.spoken.at(-1).lang, "fr-FR");
 });
 
-test("browser listening, reading, and writing retain every configured locale", async () => {
-  for (const locale of locales) {
-    const ui = await app({configured: false, locale, autoSpeak: false});
-    await ui.run('startCapture("booking")');
-    assert.equal(ui.recognitions.length, 1, locale);
-    assert.equal(ui.recognitions[0].lang, locale);
-    ui.recognitions[0].result("Localized patient reply");
-    await settle();
-
-    const message = ui.calls.find((call) => call.url === "/api/messages");
-    assert.equal(JSON.parse(message.options.body).language_locale, locale);
-    assert.deepEqual(ui.messageLocales(), [locale, locale, locale]);
-  }
-});
-
-test("transcription quota error gives an actionable manual browser fallback", async () => {
-  let transcriptionCalls = 0;
-  const ui = await app({
-    locale: "fr-FR",
-    voices: [{name: "Français", lang: "fr-FR"}],
-    fetch: (url) => {
-      if (url === "/api/voice/transcribe" && transcriptionCalls++ === 0) {
-        return response({detail: "OpenAI usage limit reached"}, 429);
-      }
-    },
-  });
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await settle(8);
-  assert.match(ui.element("statusLine").textContent, /quota.*Start listening again.*browser recognition/i);
-  await ui.run('startCapture("booking")');
-  assert.equal(ui.recognitions.length, 1);
-  assert.equal(ui.recognitions[0].lang, "fr-FR");
-  assert.equal(ui.recorders.length, 1);
-});
-
-test("a transient transcription failure retries server listening on the next recording", async () => {
-  let transcriptionCalls = 0;
-  const ui = await app({
-    locale: "fr-FR",
-    autoSpeak: false,
-    fetch: (url) => url === "/api/voice/transcribe" && transcriptionCalls++ === 0
-      ? response({detail: "Temporary transcription failure"}, 503) : undefined,
-  });
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await settle(8);
-
-  assert.equal(ui.run("transcriptionProviderUnavailable"), false);
-  assert.match(ui.element("statusLine").textContent, /temporarily unavailable.*retry/i);
-  assert.match(ui.element("voiceAvailability").textContent, /OpenAI processes recordings/);
-
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await settle(8);
-  assert.equal(ui.recorders.length, 2);
-  assert.equal(ui.recognitions.length, 0);
-  assert.equal(ui.calls.filter((call) => call.url === "/api/voice/transcribe").length, 2);
-  assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 1);
-});
-
-test("quota failure in auto mode requires a manual language and never guesses", async () => {
-  const ui = await app({fetch: (url) => url === "/api/voice/transcribe"
-    ? response({detail: "insufficient_quota"}, 429) : undefined});
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await settle(8);
-  assert.equal(ui.element("listenButton").disabled, true);
-  assert.match(ui.element("statusLine").textContent, /Select a specific language/);
-  assert.equal(ui.run("lockedLocale"), null);
-});
-
 test("generated speech failure falls back once to a matching browser voice", async () => {
   const ui = await app({
     locale: "fr-FR",
@@ -574,7 +491,6 @@ test("generated speech failure falls back once to a matching browser voice", asy
   assert.equal(ui.spoken.length, 1);
   assert.equal(ui.spoken[0].voice.name, "Français");
   assert.equal(ui.run("speechProviderUnavailable"), true);
-  assert.equal(ui.run("transcriptionProviderUnavailable"), false);
 });
 
 test("an OpenAI voice quota flag does not block a bundled local voice", async () => {
@@ -884,23 +800,25 @@ test("a synchronous browser synthesis failure is handled without losing text", a
 });
 
 test("speaking practice remains isolated from the booking session", async () => {
-  const ui = await app({
-    locale: "si-LK",
-    transcriptions: [{
-      text: "මට වෛද්‍ය හමුවක් අවශ්‍යයි",
-      language_locale: "si-LK",
-      language_detected: true,
-    }],
-  });
+  const ui = await app({locale: "si-LK"});
   const session = ui.run("sessionId");
-  await ui.run('startCapture("practice")');
-  ui.run("finishCapture()");
+  const sample = ui.run("language().sample");
+  await ui.element("practiceButton").emit("click");
+  assert.equal(ui.recognitions.length, 1);
+  assert.equal(ui.recognitions[0].lang, "si-LK");
+  assert.equal(ui.recorders.length, 0);
+  assert.equal(ui.element("practiceButtonLabel").textContent, "Listening to practice\u2026");
+  assert.equal(ui.element("practiceButton").attributes["aria-busy"], "true");
+  ui.recognitions[0].result(sample);
   await settle(8);
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+  assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
   assert.equal(ui.run("sessionId"), session);
   assert.deepEqual(ui.text(), ["Greeting si-LK 1"]);
   assert.match(ui.element("practiceResult").textContent, /100%/);
   assert.match(ui.element("practiceResult").textContent, /not pronunciation or fluency/);
+  assert.equal(ui.element("practiceButtonLabel").textContent, "Practice speaking");
+  assert.equal(ui.element("practiceButton").attributes["aria-busy"], "false");
 });
 
 test("practice handles Unicode punctuation and normalization", async () => {
@@ -940,43 +858,51 @@ test("overlapping new sessions keep only the most recent greeting", async () => 
   assert.equal(ui.run("sessionId"), "session-2");
 });
 
-test("late microphone permission after cancellation immediately releases its stream", async () => {
-  const permission = deferred();
-  const track = {stopped: false, stop() { this.stopped = true; }};
-  const ui = await app({getUserMedia: () => permission.promise});
-  const starting = ui.run('startCapture("booking")');
-  ui.run("stopCapture()");
-  permission.resolve({getTracks: () => [track]});
-  await starting;
-  assert.equal(track.stopped, true);
-  assert.equal(ui.recorders.length, 0);
-  assert.equal(ui.run("capture"), null);
-});
-
-test("cancelled recording releases tracks and never uploads audio", async () => {
+test("new booking aborts active recognition and ignores its stale result", async () => {
   const ui = await app();
-  await ui.run('startCapture("booking")');
-  assert.equal(ui.recorders[0].state, "recording");
-  ui.run("stopCapture()");
-  await settle();
-  assert.equal(ui.tracks[0].stopped, true);
-  assert.equal(ui.timers.size, 0);
+  await ui.element("listenButton").emit("click");
+  const recognition = ui.recognitions[0];
+  await ui.run("startSession(false)");
+  assert.equal(recognition.aborted, true);
+  assert.equal(ui.run("capture"), null);
+  recognition.result("Stale recognized words");
+  await settle(8);
+  assert.deepEqual(ui.text(), ["Greeting en-US 2"]);
+  assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
+  assert.equal(ui.recorders.length, 0);
+  assert.equal(ui.tracks.length, 0);
   assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
 });
 
-test("late transcription after reset cannot enter the next conversation", async () => {
-  const transcription = deferred();
-  const ui = await app({fetch: (url) => url === "/api/voice/transcribe"
-    ? transcription.promise : undefined});
-  await ui.run('startCapture("booking")');
-  ui.run("finishCapture()");
-  await flush();
-  await ui.run("startSession(false)");
-  transcription.resolve(response({text: "Old recording", language_locale: "fr-FR", language_detected: true}));
+test("a recognition error restores the one-click listening control", async () => {
+  const ui = await app({autoSpeak: false});
+  await ui.element("listenButton").emit("click");
+  ui.recognitions[0].error("no-speech");
   await settle();
-  assert.deepEqual(ui.text(), ["Greeting en-US 2"]);
+  assert.equal(ui.run("capture"), null);
+  assert.equal(ui.element("listenButtonLabel").textContent, "Start listening");
+  assert.equal(ui.element("listenButton").attributes["aria-busy"], "false");
+  assert.equal(ui.element("listenButton").disabled, false);
+  assert.match(ui.element("statusLine").textContent, /No speech was detected/i);
   assert.equal(ui.calls.filter((call) => call.url === "/api/messages").length, 0);
-  assert.equal(ui.run("lockedLocale"), null);
+  assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
+});
+
+test("a recognition safety timeout restores the one-click listening control", async () => {
+  const ui = await app({autoSpeak: false});
+  await ui.element("listenButton").emit("click");
+  assert.equal(ui.timers.size, 1);
+
+  const timeout = [...ui.timers.values()][0];
+  timeout();
+
+  assert.equal(ui.recognitions[0].aborted, true);
+  assert.equal(ui.run("capture"), null);
+  assert.equal(ui.timers.size, 0);
+  assert.equal(ui.element("listenButtonLabel").textContent, "Start listening");
+  assert.equal(ui.element("listenButton").attributes["aria-busy"], "false");
+  assert.equal(ui.element("listenButton").disabled, false);
+  assert.match(ui.element("statusLine").textContent, /no result was received/i);
 });
 
 test("expired session starts fresh in the effective locale and keeps reply for explicit resubmission", async () => {
@@ -1016,13 +942,16 @@ test("failed message preserves editable text for retry", async () => {
   assert.match(ui.element("statusLine").textContent, /kept in the text box/);
 });
 
-test("recording timer is visible only during server recording", async () => {
-  const ui = await app();
-  assert.equal(ui.element("recordingTimer").hidden, true);
-  await ui.run('startCapture("booking")');
-  assert.equal(ui.element("recordingTimer").hidden, false);
-  ui.run("stopCapture()");
-  await settle();
-  assert.equal(ui.element("recordingTimer").hidden, true);
-  assert.equal(ui.timers.size, 0);
+test("recognition ending without a final result restores Start listening", async () => {
+  const ui = await app({autoSpeak: false});
+  await ui.element("listenButton").emit("click");
+  ui.recognitions[0].end();
+  assert.equal(ui.run("capture"), null);
+  assert.equal(ui.element("listenButtonLabel").textContent, "Start listening");
+  assert.equal(ui.element("listenButton").attributes["aria-busy"], "false");
+  assert.equal(ui.element("listenButton").disabled, false);
+  assert.match(ui.element("statusLine").textContent, /No speech received.*Start listening/i);
+  assert.equal(ui.recorders.length, 0);
+  assert.equal(ui.tracks.length, 0);
+  assert.equal(ui.calls.some((call) => call.url === "/api/voice/transcribe"), false);
 });
